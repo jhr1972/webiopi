@@ -1,0 +1,432 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>Turbine</title>
+  <script type="text/javascript" src="/webiopi.js"></script>
+  <script type="text/javascript">
+ 
+    function toggleState(myitem){
+      if(myitem.className == "on") {
+        myitem.className="off";
+        document.getElementById("activeStatus").value = "Off";
+        //document.getElementById('aktuellerSollwert').readOnly = true;
+        document.getElementById('updateValues').disabled = true;
+        webiopi().callMacro("setAutomationActive","Off");
+        
+      } else {
+        myitem.className="on";
+        document.getElementById("activeStatus").value = "On"; 
+        //document.getElementById('aktuellerSollwert').readOnly = false;
+        document.getElementById('updateValues').disabled = false;
+        webiopi().callMacro("setAutomationActive","On");
+      }
+    }
+    function updateValues() {
+      var l_neuerSollwert = document.getElementById('neuerSollwert').value;
+      var l_neuesZeitfenster = document.getElementById("neuesZeitfenster").value
+      var soll = [l_neuerSollwert,l_neuesZeitfenster]
+      webiopi().callMacro("setValues",soll);
+    }
+  
+   var pythonValues = function(macro, args, response) {
+    var solls = response.split(";");
+    $("#activeStatus").val(solls[0]);
+    $("#aktuellerSollwert").val(solls[1]);
+    $("#aktuellesZeitfenster").val(solls[2]);
+    $("#Ca").val(solls[4]);
+    document.getElementById("Ca").textContent=(solls[3]);
+    document.getElementById("Cb").textContent=(solls[4]);
+    document.getElementById("Cc").textContent=(solls[5]);
+    //    document.getElementById("WirkLeistung").textContent=(solls[6]);
+    document.getElementById("Frequenz").textContent=(solls[7]);
+    document.getElementById("spa").textContent=(solls[8]);
+    document.getElementById("spb").textContent=(solls[9]);
+    document.getElementById("spc").textContent=(solls[10]);
+    document.getElementById("spt").textContent=(solls[11]);
+    document.getElementById("countdown").textContent=(solls[12]);
+    if (solls[0].includes("On")){
+      document.getElementById("activeStatus").value = "On";
+      document.getElementById("activeStatus").className = "on";
+      document.getElementById('neuesZeitfenster').readOnly = false;
+      document.getElementById('neuesZeitfenster').className = "greyedOutOff";
+      document.getElementById('neuerSollwert').readOnly = false;
+      document.getElementById('neuerSollwert').className = "greyedOutOff";
+      document.getElementById('updateValues').disabled = false;
+    }
+    if (solls[0].includes("Off")){
+      document.getElementById("activeStatus").value = "Off";
+      document.getElementById("activeStatus").className = "off";
+      document.getElementById('neuesZeitfenster').readOnly = true;
+      document.getElementById('neuesZeitfenster').className = "greyedOutOn";
+      document.getElementById('neuerSollwert').readOnly = true;
+      document.getElementById('neuerSollwert').className = "greyedOutOn";
+      document.getElementById('updateValues').disabled = true;
+      
+    }
+                   
+   }
+   var smtpValues = function(macro, args, response) { 
+       //document.getElementById("smtp0").textContent = "test"+Math.random().toString();;
+       var smtps = response.split(";");
+                   //31 klein oben
+                   //32 klein unten
+                   //34 groß unten
+                   //35 groß mitte 
+                   //36 groß oben
+                   //70 Betriebsstunden
+       for (var c = 0; c < cellsInRow*10; c++) {
+         document.getElementById("smtp"+c).textContent = smtps[c];
+       }
+       document.getElementById("Rpm").innerHTML = smtps[71];
+       document.getElementById("Level").innerHTML = smtps[72];
+       document.getElementById("Power").innerHTML = smtps[73];
+       document.getElementById("kleinoben").textContent = smtps[31];
+       document.getElementById("kleinunten").textContent = smtps[32];
+       document.getElementById("grossunten").textContent = smtps[34];
+       document.getElementById("grossmitte").textContent = smtps[35];
+       document.getElementById("grossoben").textContent = smtps[33];
+       if (parseInt(smtps[9]) == 1) {
+         document.getElementById("hydraulik").textContent = "on";
+         document.getElementById("hydraulik").className = "green"
+       }else {
+         document.getElementById("hydraulik").textContent = "off";
+         document.getElementById("hydraulik").className = "greyedOutOff"
+       }
+       if (parseInt(smtps[17]) == 1) {
+         document.getElementById("talarm").className = "alarmon"
+         document.getElementById("talarm").textContent = "FEHLER!!!"
+       }else {
+         document.getElementById("talarm").className = "alarmoff"
+         document.getElementById("talarm").textContent = "Keine Störung"
+       }
+       document.getElementById("betriebsstunden").innerHTML  = splitTime(parseInt(smtps[70])).toString();
+       document.getElementById("arbeit").textContent = parseInt(smtps[74])+322845;
+       document.getElementById("schnitt").textContent = Math.round(100*(parseInt(smtps[74])+322845)/parseInt(smtps[70]))/100;
+    }
+    function splitTime(numberOfHours){
+      var Years = Math.floor(numberOfHours/(365*24));
+      var Remainder = numberOfHours - (Years*24*365) 
+      var Days=Math.floor(Remainder/24);
+      Remainder=numberOfHours -(Years*24*365) - Days*24
+      var Hours=Math.floor(Remainder);
+      var Minutes=Math.floor(60*(Remainder-Hours));
+      //return({"Days":Days,"Hours":Hours})
+      return("Years: "+Years +"<br>Days: "+ Days+ "<br>Hours: "+Hours)
+    }
+    function TimerInterval()
+    {
+      webiopi().callMacro("getValues","",pythonValues);
+      webiopi().callMacro("getAllSmtp","",smtpValues);
+    }
+    function startInterval()
+    {
+       setInterval(TimerInterval,500);
+    }
+  
+  
+     
+  
+  
+    webiopi().ready(function() {
+      TimerInterval();
+      startInterval();
+      webiopi().callMacro("getValues", [], pythonValues);
+      webiopi().callMacro("getAllSmtp", [], smtpValues);
+  
+      var button19 = webiopi().createGPIOButton(19, "Klein-Auf");
+      var button26 = webiopi().createGPIOButton(26, "Klein-Zu");
+      var button16 = webiopi().createGPIOButton(16, "Gross-Auf");
+      var button20 = webiopi().createGPIOButton(20, "Gross-Zu");
+      var button21 = webiopi().createGPIOButton(21, "reset");
+      $("#klein").append(button19);
+      $("#klein").append(button26);
+      $("#gross").append(button16);
+      $("#gross").append(button20);
+      //$("#reset").append(button21);
+      $("#treset").append(button21);
+  
+      webiopi().refreshGPIO(true);
+    });
+  
+    var cellsInRow = 10;
+  
+  
+    function drawTable() {
+      var div1 = document.getElementById('div1');
+      var tbl = document.createElement("table");
+      for (b = 0 ; b< 10 ; b++){
+        var header = document.createElement("tr");
+        for (var c = b*10; c < (b*10+10); c++) {
+          var cell = document.createElement("th");
+          var cellText = document.createTextNode("ID".concat(c.toString()));
+          cell.appendChild(cellText);
+          header.appendChild(cell);
+        }
+        var data = document.createElement("tr");
+        for (var c = b*10; c < (b*10+10); c++) {
+          var cell = document.createElement("td");
+          cell.setAttribute("id","smtp"+c);
+          data.appendChild(cell);
+        }            
+        tbl.appendChild(header); // add the row to the end of the table body
+        tbl.appendChild(data);
+      }
+      div1.appendChild(tbl); // appends <table> into <div1>
+    }
+    window.onload=drawTable; 
+  </script>
+  <style type="text/css">
+    
+
+    #gpio21.LOW {
+        background-color: black 
+    }
+
+    .alarmon {
+      background: red
+    }
+    .alarmoff {
+      background:green;
+    }
+    #automatik {
+      font-weight: bold;
+    }
+    #smtp {
+      font-weight: bold;
+    }
+    .on  { background:blue;
+      font-size: large;
+      color: antiquewhite; 
+      margin-left: 0px;
+     }
+    .off { background:red;
+         font-size: large;
+         margin-left: 0px;
+         }
+    
+    .aktullerWert {
+      background: grey;
+    }
+    
+    .greyedOutOn {
+      background: grey;
+      margin-left: 0px;
+    }
+    .fetteLinie {
+      border-style: solid
+    }
+
+    .aktuellerWert {
+      background: grey;
+      margin-left: 0px;
+    }
+    .greyedOutOff {
+      background: whitesmoke;
+      margin-left: 0px;
+    }
+    .green {
+      background: rgb(119, 166, 87);
+      margin-left: 50px;
+    }
+
+    td.hiddenborder, tr.hiddenborder {
+      border: hidden;
+      text-align: left; 
+    }
+
+    button {
+      display: block;
+      margin: 5px 5px 5px 5px;
+      width: 205px;
+      height: 45px;
+      font-size: 24pt;
+      font-weight: bold;
+      color: rgb(191, 12, 27);
+      border-color: blue;
+      flood-color: aquamarine;
+
+    }
+    table{
+       border-collapse: collapse;
+       border-spacing: 0;
+    }
+    th, td{
+       padding: 10px 20px;
+       border: 1px solid #000;
+    }
+ 
+  </style>
+</head>
+<body>
+
+  <table style="width:50%">
+  <tr>
+    <th>Kleine Klappe</th>
+    <th>Große Klappe</th>
+  </tr>
+  <tr>
+    <td><div id="klein" align="center"></div></td>
+    <td><div id="gross" align="center"></div></td>
+  </tr>
+
+  </table>
+  <p><span id="automatik"> Aktueller Turbinenstatus: </span></p>
+  <div style="vertical-align:top;">
+  <table style="display:inline-table;">
+    <tr>
+      <td allign="center"> Leistung Turbine [W]: </td>
+      <td><div id="Power" align="center"></div></td>
+    </tr>
+    <tr>
+      <td allign="center">Wasser Level:</td>
+      <td><div id="Level" align="center"></div></td>
+    </tr>
+    <tr>
+      <td allign="center">RPMs:</td>
+      <td><div id="Rpm" align="center"></div></td>
+    </tr>
+    <tr>
+      <td allign="center">Arbeit[kwh]:</td>
+      <td><div id="arbeit" align="left"></div></td>
+    </tr>
+    <tr>
+      <td allign="center">Schnitt[kw]:</td>
+      <td><div id="schnitt" align="left"></div></td>
+    </tr>
+    <tr>
+      <td allign="center">Betriebsstunden:</td>
+      <td><div id="betriebsstunden" align="left"></div></td>
+    </tr>
+
+
+  </table>
+  <table style="display:inline-table;">
+    <tr>
+       <th allign="center">Position </td>
+       <th allign="center">kleine Klappe </td>
+       <th allign="center">große Klappe </td>
+    </tr>
+    <tr>
+      <td allign="center">oben </td>
+      <td><div id="kleinoben" allign="center"> </td>  
+      <td><div id="grossoben" allign="center"> </td>    
+   </tr>
+   <tr>
+    <td allign="center">mitte </td>
+    <td>N/A</td>  
+    <td><div id="grossmitte" allign="center"> </td>    
+   </tr>
+   <tr >
+    <td allign="center">unten </td>
+    <td><div id="kleinunten" allign="center" > </td>  
+    <td><div id="grossunten" allign="center"> </td>    
+   </tr>
+   <tr class="fetteLinie"/>
+   <tr>
+    <td allign="center" >Hydraulik </td>
+    <td colspan = "2" ><div id="hydraulik" allign="center"> </td>  
+    
+   </tr>
+   <tr>
+    <td allign="center" >Alarm </td>
+    <td ><div id="talarm" allign="center"> </td>  
+    <td ><div id="treset" allign="center"> </td>  
+    
+   </tr>
+  </table>
+</div>
+<BR><BR>
+<table width=920  class="hiddenborder" >
+<tr class="hiddenborder">
+<td class="hiddenborder"><b>Turbinensteuerung:</b></td>
+</p> 
+<td><b>Status Einspeisung:</b></td>
+</tr>
+</table>
+
+  <div  style="float: left;margin-right:10px">
+    <table style="display:inline-table;" allign="top">
+      <tr> <td>Status</td><td  colspan = "2" ><input type="button" id="activeStatus" value="On" class="on" onclick="toggleState(this)" /></td> </tr>
+      <tr> <td> Aktueller Sollwert: </td><td  colspan = "2"><input id="aktuellerSollwert"  class="aktuellerWert"/> <br/></td></tr>
+      <tr> <td>Aktuelles Zeitfenster:</td><td> <input id="aktuellesZeitfenster"  class="aktuellerWert"/> <br/></td><td id="countdown">...</td></tr>
+      <tr> <td>Neuer Sollwert:    </td><td  colspan = "2"><input id="neuerSollwert"  class="greyedOutOff"/> <br></td></tr>
+      <tr> <td>Neues Zeitfenster: </td><td  colspan = "2"><input id="neuesZeitfenster"  class="greyedOutOff"/> <br/></td></tr>
+      <tr><td colspan = "3" align="center"><input type="button" id="updateValues" value="Update" class="updateValues" onclick="updateValues(this)" /></td></tr>
+    </table>
+  </div>
+  <div style="float: left">
+  <table>
+    <tr>
+      <td>Frequenz[Hz]</td>
+      <td id=Frequenz></td>
+    </tr>
+    <tr>
+      <td>Strom A[A]</td>
+      <td id=Ca></td>
+    </tr>
+    <tr>
+      <td>Strom B[A]</td>
+      <td id=Cb></td>
+    </tr>
+    <tr>
+      <td>Strom C[A]</td>
+      <td id=Cc></td>
+    </tr>
+    <tr>
+      <td>Signed Power A [W]</td>
+      <td id=spa></td>
+    </tr>
+    <tr>
+      <td>Signed Power B [W]</td>
+      <td id=spb></td>
+    </tr>
+    <tr>
+      <td>Signed Power C [W]</td>
+      <td id=spc></td>
+    </tr>
+    <tr>
+      <td>Signed Total Power [W]</td>
+      <td id=spt></td>
+    </tr>
+  </table>
+</div> 
+  <div style="clear:both;" />
+<br>
+<table width=790  class="hiddenborder" >
+<tr class="hiddenborder">
+<td class="hiddenborder"><b>Zeitliche Darstellung</b></td>
+</p>
+</tr>
+</table>
+  <iframe 
+  width="800"
+  height="400"
+  src='/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&viewPanel=2'
+  frameBorder="0">
+  </iframe>
+
+  <iframe 
+  width="800"
+  height="400"
+  src='/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&&viewPanel=6'
+  frameBorder="0">
+  </iframe>
+
+
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+  <p><span id="smtp">Sonstige values: </span></p>
+  <div align="left" id="div1">
+     
+    
+  </div>
+
+</body>
+</html>
+
