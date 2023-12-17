@@ -27,7 +27,7 @@ impulsdauer = 3
 impulsstart = 0
 l_result = []
 
-aktuellerSollwert = 43
+aktuellerSollwert = 35
 aktuellesZeitfenster = 1800
 automationActive = "on"
 
@@ -322,7 +322,7 @@ def setAutomationActive(l_automationActive):
 
 @webiopi.macro
 def getAutomationActive():
-    print("setAutomationActive called")
+    print("getAutomationActive called")
     return automationActive
 
          
