@@ -46,11 +46,6 @@
     document.getElementById("spt").textContent=(solls[11]);
     document.getElementById("countdown").textContent=(solls[12]);
     document.getElementById("current").textContent=(solls[13]);
-    document.getElementById("sdm530_l1_power_active").textContent=(solls[14]);
-    document.getElementById("sdm530_l2_power_active").textContent=(solls[15]);
-    document.getElementById("sdm530_l3_power_active").textContent=(solls[16]);
-    document.getElementById("sdm530_total_power_active").textContent=(solls[17]);
-    document.getElementById("sdm530_import_energy_active").textContent=(solls[18]);
     if (solls[0].includes("On")){
       document.getElementById("activeStatus").value = "On";
       document.getElementById("activeStatus").className = "on";
@@ -129,7 +124,7 @@
     }
     function startInterval()
     {
-       setInterval(TimerInterval,1000);
+       setInterval(TimerInterval,3000);
     }
   
   
@@ -402,43 +397,6 @@
 </div> 
   <div style="clear:both;" />
 <br>
-
-<table width=920  class="hiddenborder" >
-  <tr class="hiddenborder">
-  <td class="hiddenborder"><b>SDM530:</b></td>
-  </p> 
-
-  </tr>
-</table>
-
-<div style="float: left">
-  <table>
-    <tr>
-      <td>L1 Power active [W]</td>
-      <td id=sdm530_l1_power_active></td>
-    </tr>
-    <tr>
-      <td>L2 Power active [W]</td>
-      <td id=sdm530_l2_power_active></td>
-    </tr>
-    <tr>
-      <td>L3 Power active [W]</td>
-      <td id=sdm530_l3_power_active></td>
-    </tr>
-    <tr>
-      <td>Total Power active [W]</td>
-      <td id=sdm530_total_power_active></td>
-    </tr>
-    <tr>
-      <td>Energy Total [kWh]</td>
-      <td id=sdm530_import_energy_active></td>
-    </tr>
-    
-  </table>
-</div> 
-<div style="clear:both;" />
-<br>
-
 <table width=790  class="hiddenborder" >
 <tr class="hiddenborder">
 <td class="hiddenborder"><b>Zeitliche Darstellung</b></td>

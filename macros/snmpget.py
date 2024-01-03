@@ -10,12 +10,16 @@ import sys
 import struct
 import logging
 import pymodbus.client.serial
+import sdm_modbus
+
 from pysnmp.hlapi import *
 from flask import Flask
 sys.path.insert(0,"/home/pi/webiopi/macros")
 from Basics  import *
 from webiopi.utils.types import values
-
+from pymodbus.register_read_message import ReadInputRegistersResponse
+from pymodbus.payload import BinaryPayloadDecoder
+from pymodbus.constants import Endian
 
 GPIO = webiopi.GPIO
 level = "init"
@@ -31,10 +35,14 @@ aktuellerSollwert = 35
 aktuellesZeitfenster = 1800
 automationActive = "on"
 
+sensor = [
+   ( 'c1'     ,0x03, '%6.1f',1 )  #sensor c1 
+]
+
 regs = [
-   ( 'Va'     ,0x61, '%6.1f',1 ), # Voltage Phase A [V]
-   ( 'Vb'     ,0x62, '%6.1f',1 ), # Voltage Phase B [V]
-   ( 'Vc'     ,0x63, '%6.1f',1 ), # Voltage Phase C [V]
+   ( 'P1'     ,0x0c, '%6.2f',2 ), # Active Power ("Wirkleistung") Phase 1 [W]
+   ( 'P2'     ,0x000e, '%6.2f',2 ), # Active Power ("Wirkleistung") Phase 2 [W]
+   ( 'P3'     ,0x0010, '%6.2f',2 ), #  Active Power ("Wirkleistung") Phase 3 [W]
    ( 'Ca'     ,0x64, '%6.2f',2), # Current Phase A[A]
    ( 'Cb'     ,0x65, '%6.2f',2 ), # Current Phase B[A]
    ( 'Cc'     ,0x66, '%6.2f',2 ), # Current Phase C[A]
@@ -45,15 +53,17 @@ regs = [
    ( 'Freq'   ,0x77, '%6.2f',2 )  # Line Frequency [Hz]         
 
 ]
+
 double_regs = [
         # Symbol    Reg#  Format
-         ( 'Pa_compl'     ,0x164, '%6.1f',1 ), # Active Power with complement
+         ( 'Pa_compl'     , 0x164, '%6.2f',2 ), # Active Power with complement
          ( 'Pb_compl'     ,0x166, '%6.1f',1 ), # Active Power with complement
          ( 'Pc_compl'     ,0x168, '%6.1f',1 ), # Active Power with complement
-         ( 'P_compl'     ,0x16A, '%6.1f',1 ), # Active Total Power with complement
+         ( 'P_compl'     ,0x16A, '%6.1f',1 ) # Active Total Power with complement
 ]
-cl = pymodbus.client.ModbusSerialClient( port='/dev/ttyUSB1', baudrate=9600, parity='N',stopbits=1, timeout=1)
 
+cl0 = pymodbus.client.ModbusSerialClient( port='/dev/ttyUSB0', baudrate=9600, parity='N',stopbits=1, timeout=1)
+cl1 = pymodbus.client.ModbusSerialClient( port='/dev/ttyUSB1', baudrate=9600, parity='N',stopbits=1, timeout=1)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -61,7 +71,8 @@ logger.propagate = False
 # create console handler and set level to debug
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
-fh = logging.FileHandler(r'/var/log/turbine.log')
+ch = logging.FileHandler(r'/var/log/turbine.log')
+fh = logging.StreamHandler(sys.stdout)
 
 # create formatter
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -126,9 +137,12 @@ def loop():
         automation()
     else:
         logger.debug("skipping automation")
-    
-    read_bulk(cl,regs)
-    read_double_bulk(cl,double_regs)
+    read_bulk(cl1,regs)
+    read_double_bulk(cl1,double_regs)
+    read_sensor(cl1,sensor)
+    read_sdm530(cl0)
+    #print (values)
+    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%d;%.2f;%d;%d;%d;%d;%.2f" % (automationActive, aktuellerSollwert, aktuellesZeitfenster, values['Ca'], values['Cb'], values['Cc'], values['P_active'], values['Freq'],  values['Pa_compl'],  values['Pb_compl'],  values['Pc_compl'],  values['P_compl'], int( aktuellesZeitfenster -(time.time() - lastAction)),values['c1'],values['sdm530_l1_power_active'],values['sdm530_l2_power_active'],values['sdm530_l3_power_active'],values['sdm530_total_power_active'],values['sdm530_import_energy_active']) 
     webiopi.sleep(1)
 
 
@@ -204,10 +218,67 @@ def read_bulk (client, lregs ):
                #print ("static increment: " + str(increment))
            regcounter+=increment   
            i=i+1
-        print (values)
+        
     except:
         print ("Exception occured.Waiting 3 sec to stabilize")
         time.sleep(3)
+
+def read_sdm530 (client ):
+    meter = sdm_modbus.SDM630(
+        device='/dev/ttyUSB0',
+        stopbits=1,
+        parity='N',
+        baud=9600,
+        timeout=1,
+        unit=4
+    )
+   # print("\nInput Registers:")
+   # print(f"{meter}:")
+    lst = ['l1_power_active','l2_power_active','l3_power_active','total_power_active','import_energy_active']
+    global values 
+    for k, v in meter.read_all(sdm_modbus.registerType.INPUT).items():
+        address, length, rtype, dtype, vtype, label, fmt, batch, sf = meter.registers[k]
+        if ( any(k in x for x in lst) ):
+           values['sdm530_'+k]=v
+    #    if type(fmt) is list or type(fmt) is dict:
+    #        print(f"\t{label}: {fmt[str(v)]}")
+    #    elif vtype is float:
+    #        print(f"\t{label}: {v:.2f}{fmt}")
+    #    else:
+    #        print(f"\t{label}: {v}{fmt}")
+
+def read_sensor (client, lregs ):
+    bulklen=lregs[len(lregs)-1][1]-lregs[0][1]+1
+    #print ("Bulklen: " +str(bulklen))
+    try:
+        resp = client.read_holding_registers(lregs[0][1],count=bulklen, slave=1)
+        if (resp.function_code >= int('0x80',16)):
+           print ("Received error code %",resp.function_code)
+           return
+        print(str(resp.registers))
+     
+        global values 
+        i=0
+        regcounter=0
+        increment=0
+        
+        while i < len(lregs):
+           #print ("i: " + str(i) + " regcounter: " +str(regcounter) + " getRegister: " + str(resp.getRegister(regcounter)))
+           values[lregs[i][0]]=resp.getRegister(regcounter)/(10**lregs[i][3])
+           if i<len(lregs)-1: 
+               increment = lregs[i+1][1]-lregs[i][1]
+               #print ("calculated increment: " + str(increment))
+           else: 
+               increment=1
+               #print ("static increment: " + str(increment))
+           regcounter+=increment   
+           i=i+1
+        logger.debug ("sensor")
+        #logger.debug (values)
+    except:
+        print ("Exception occured.Waiting 3 sec to stabilize")
+        time.sleep(3)
+
 
 def automation():
     logger.debug("Executing automation")
@@ -254,8 +325,6 @@ def klappeBewegen(direction):
          GPIO.output(26, False)
          impulsstart = 0
          lastAction = int(time.time())
-         
-         
 
 @webiopi.macro
 def getLevel():
@@ -296,7 +365,7 @@ def setValues(l_aktuellerSollwert,l_aktuellesZeitfenster ):
 def getValues():
     #print("getValues called")
     if values.get('Ca') and values.get('Pa_compl'):
-      return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%d" % (automationActive, aktuellerSollwert, aktuellesZeitfenster, values['Ca'], values['Cb'], values['Cc'], values['P_active'], values['Freq'],  values['Pa_compl'],  values['Pb_compl'],  values['Pc_compl'],  values['P_compl'], int( aktuellesZeitfenster -(time.time() - lastAction)))
+      return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%d;%.2f;%d;%d;%d;%d;%.2f" % (automationActive, aktuellerSollwert, aktuellesZeitfenster, values['Ca'], values['Cb'], values['Cc'], values['P_active'], values['Freq'],  values['Pa_compl'],  values['Pb_compl'],  values['Pc_compl'],  values['P_compl'], int( aktuellesZeitfenster -(time.time() - lastAction)),values['c1'],values['sdm530_l1_power_active'],values['sdm530_l2_power_active'],values['sdm530_l3_power_active'],values['sdm530_total_power_active'],values['sdm530_import_energy_active']) 
     else:
       return "%s;%d;%d;%.2f;%.2f;%.2f;%.3f;%.2f,%d,%d,%d,%d" % (automationActive, aktuellerSollwert, aktuellesZeitfenster, 0,0,0,0,0,0,0,0,0 ) 
     #return "%s;%d;%d" % (automationActive, aktuellerSollwert, aktuellesZeitfenster)
@@ -335,14 +404,14 @@ def test1():
     return 'rest'
 #@app.errorhandler(500)
 def handle_500(error):
-    return str(error), 500 
+    return str(error), 500          
     
 # Using the special variable 
 # __name__
 if __name__=="__main__":
     print("")
     #app.run()
-    #loop()
+    loop()
     #logger.debug(f"l_result  {l_result}")
     #logger.debug("Starting main")
     #wl=Level(5,"level",logger)
@@ -353,6 +422,7 @@ if __name__=="__main__":
    # wl.isStable()
     #logger.debug(str(wl))
     #loop()
+   
    
 
         

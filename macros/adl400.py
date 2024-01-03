@@ -53,7 +53,7 @@ def read_double_bulk (client, lregs ):
      #   index += 1
      #print ("Myvalues" +str(values))
 def read_float_reg(client, basereg, precission) :
-    resp = client.read_holding_registers(basereg,count=1,slave=24, unit=24)
+    resp = client.read_holding_registers(basereg,count=1,slave=13, unit=13)
     if resp == None :
         return None
     # according to spec, each pair of registers returned
