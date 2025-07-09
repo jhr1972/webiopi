@@ -11,6 +11,7 @@ import struct
 import logging
 import pymodbus.client.serial
 import sdm_modbus
+import threading
 
 from pysnmp.hlapi import *
 from flask import Flask
@@ -29,15 +30,15 @@ deltaForAction = 1
 lastAction = None
 impulsdauer = 3
 impulsstart = 0
-l_result = []
-
-aktuellerSollwert = 35
+ 
+aktuellerSollwert = 40
 aktuellesZeitfenster = 1800
 automationActive = "on"
 
-sensor = [
-   ( 'c1'     ,0x03, '%6.1f',1 )  #sensor c1 
-]
+#global app = Flask(__name__)
+l_result = []
+
+
 
 regs = [
    ( 'P1'     ,0x0c, '%6.2f',2 ), # Active Power ("Wirkleistung") Phase 1 [W]
@@ -62,20 +63,30 @@ double_regs = [
          ( 'P_compl'     ,0x16A, '%6.1f',1 ) # Active Total Power with complement
 ]
 
-cl0 = pymodbus.client.ModbusSerialClient( port='/dev/ttyUSB0', baudrate=9600, parity='N',stopbits=1, timeout=1)
-cl1 = pymodbus.client.ModbusSerialClient( port='/dev/ttyUSB1', baudrate=9600, parity='N',stopbits=1, timeout=1)
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 # create console handler and set level to debug
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
-ch = logging.FileHandler(r'/var/log/turbine.log')
+#ch = logging.FileHandler(r'/var/log/turbine.log')
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+try:
+    ch = logging.FileHandler('/var/log/turbine.log')
+    
+    ch.setLevel(logging.DEBUG)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+except (PermissionError, OSError) as e:
+    fallback = logging.StreamHandler(sys.stdout)
+    fallback.setLevel(logging.DEBUG)
+    fallback.setFormatter(formatter)
+    logger.addHandler(fallback)
+    logger.warning(f"Logging to file failed: {e}. Falling back to STDOUT.")
 fh = logging.StreamHandler(sys.stdout)
 
 # create formatter
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
 
 # add formatter to ch
 ch.setFormatter(formatter)
@@ -137,93 +148,34 @@ def loop():
         automation()
     else:
         logger.debug("skipping automation")
-    read_bulk(cl1,regs)
-    read_double_bulk(cl1,double_regs)
-    read_sensor(cl1,sensor)
-    read_sdm530(cl0)
+    #read_bulk(cl1,regs)
+    #read_double_bulk(cl1,double_regs)
+    #read_sensor(cl1,sensor)
+    read_sdm530()
+    read_sdm630()
     #print (values)
-    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%d;%.2f;%d;%d;%d;%d;%.2f" % (automationActive, aktuellerSollwert, aktuellesZeitfenster, values['Ca'], values['Cb'], values['Cc'], values['P_active'], values['Freq'],  values['Pa_compl'],  values['Pb_compl'],  values['Pc_compl'],  values['P_compl'], int( aktuellesZeitfenster -(time.time() - lastAction)),values['c1'],values['sdm530_l1_power_active'],values['sdm530_l2_power_active'],values['sdm530_l3_power_active'],values['sdm530_total_power_active'],values['sdm530_import_energy_active']) 
-    webiopi.sleep(1)
+ 
+    webiopi.sleep(0.5)
 
 
-def read_double_bulk (client, lregs ):
-    bulklen=(lregs[len(lregs)-1][1]-lregs[0][1]+2)
-    #print ("Bulklen: " +str(bulklen))
-    try:
-        resp = client.read_holding_registers(lregs[0][1],count=bulklen, slave=24)
-        if (resp.function_code >= int('0x80',16)):
-           print ("Received error code %",resp.function_code)
-           return
-        print(str(resp.registers))
-
-        global values
-        i=0
-        regcounter=0
-        increment=0
-
-        while i < len(lregs):
-           #print ("i: " + str(i) + " regcounter: " +str(regcounter) + " getRegister: " + str(resp.getRegister(regcounter)))
-           print (f"i: %d, content: %s" %  ( i, str(resp.getRegister(regcounter))))
-           print (f"i+1: %d, content: %s" %  ( i+1, str(resp.getRegister(regcounter+1))))
-           value=struct.unpack('>i',struct.pack('>HH',resp.getRegister(regcounter),resp.getRegister(regcounter+1)))
-           print (f" Struct: %d" % value)
-           values[lregs[i][0]]=int(''.join(map(str, value)))#/(10**lregs[i][3])
-           if i<len(lregs)-1:
-               increment = lregs[i+1][1]-lregs[i][1]
-               #print ("calculated increment: " + str(increment))
-           else:
-               increment=2
-               #print ("static increment: " + str(increment))
-           regcounter+=increment
-           i=i+1
-        print (values)
-    except Exception as e:
-        print(e)
-        print ("Exception occured.Waiting 3 sec to stabilize")
-        time.sleep(3)
-
-
-
-        #print ("i: " +str(i) + "; " + "index: "+ str(increment) +"; " +str(resp.getRegister(increment)/(10**lregs[increment][3])))
-        #values[lregs[i][0]]=resp.getRegister(i)/(10**lregs[i][3])
-     #index = 0
-     #for reg in lregs:
-     #   values[reg[0]]=resp.getRegister(index + lregs[len(lregs)-1][1]-lregs[index][1])/reg[3]
-     #   index += 1
-     #print ("Myvalues" +str(values))
-
-def read_bulk (client, lregs ):
-    bulklen=lregs[len(lregs)-1][1]-lregs[0][1]+1
-    #print ("Bulklen: " +str(bulklen))
-    try:
-        resp = client.read_holding_registers(lregs[0][1],count=bulklen, slave=24)
-        if (resp.function_code >= int('0x80',16)):
-           print ("Received error code %",resp.function_code)
-           return
-        print(str(resp.registers))
-     
-        global values 
-        i=0
-        regcounter=0
-        increment=0
+def read_sdm630 ( ):
+    meter = sdm_modbus.SDM630(
+        device='/dev/ttyUSB1',
+        stopbits=1,
+        parity='N',
+        baud=9600,
+        timeout=1,
+        unit=1
+    )
+    lst = ['l1_power_active','l2_power_active','l3_power_active','total_power_active','import_energy_active','export_energy_reactive','frequency']
+    global values 
+    for k, v in meter.read_all(sdm_modbus.registerType.INPUT).items():
+        address, length, rtype, dtype, vtype, label, fmt, batch, sf = meter.registers[k]
+        if ( any(k in x for x in lst) ):
+           values['sdm630_'+k]=v
         
-        while i < len(lregs):
-           #print ("i: " + str(i) + " regcounter: " +str(regcounter) + " getRegister: " + str(resp.getRegister(regcounter)))
-           values[lregs[i][0]]=resp.getRegister(regcounter)/(10**lregs[i][3])
-           if i<len(lregs)-1: 
-               increment = lregs[i+1][1]-lregs[i][1]
-               #print ("calculated increment: " + str(increment))
-           else: 
-               increment=1
-               #print ("static increment: " + str(increment))
-           regcounter+=increment   
-           i=i+1
-        
-    except:
-        print ("Exception occured.Waiting 3 sec to stabilize")
-        time.sleep(3)
 
-def read_sdm530 (client ):
+def read_sdm530 ( ):
     meter = sdm_modbus.SDM630(
         device='/dev/ttyUSB0',
         stopbits=1,
@@ -247,37 +199,6 @@ def read_sdm530 (client ):
     #    else:
     #        print(f"\t{label}: {v}{fmt}")
 
-def read_sensor (client, lregs ):
-    bulklen=lregs[len(lregs)-1][1]-lregs[0][1]+1
-    #print ("Bulklen: " +str(bulklen))
-    try:
-        resp = client.read_holding_registers(lregs[0][1],count=bulklen, slave=1)
-        if (resp.function_code >= int('0x80',16)):
-           print ("Received error code %",resp.function_code)
-           return
-        print(str(resp.registers))
-     
-        global values 
-        i=0
-        regcounter=0
-        increment=0
-        
-        while i < len(lregs):
-           #print ("i: " + str(i) + " regcounter: " +str(regcounter) + " getRegister: " + str(resp.getRegister(regcounter)))
-           values[lregs[i][0]]=resp.getRegister(regcounter)/(10**lregs[i][3])
-           if i<len(lregs)-1: 
-               increment = lregs[i+1][1]-lregs[i][1]
-               #print ("calculated increment: " + str(increment))
-           else: 
-               increment=1
-               #print ("static increment: " + str(increment))
-           regcounter+=increment   
-           i=i+1
-        logger.debug ("sensor")
-        #logger.debug (values)
-    except:
-        print ("Exception occured.Waiting 3 sec to stabilize")
-        time.sleep(3)
 
 
 def automation():
@@ -364,11 +285,29 @@ def setValues(l_aktuellerSollwert,l_aktuellesZeitfenster ):
 @webiopi.macro
 def getValues():
     #print("getValues called")
-    if values.get('Ca') and values.get('Pa_compl'):
-      return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%d;%.2f;%d;%d;%d;%d;%.2f" % (automationActive, aktuellerSollwert, aktuellesZeitfenster, values['Ca'], values['Cb'], values['Cc'], values['P_active'], values['Freq'],  values['Pa_compl'],  values['Pb_compl'],  values['Pc_compl'],  values['P_compl'], int( aktuellesZeitfenster -(time.time() - lastAction)),values['c1'],values['sdm530_l1_power_active'],values['sdm530_l2_power_active'],values['sdm530_l3_power_active'],values['sdm530_total_power_active'],values['sdm530_import_energy_active']) 
-    else:
-      return "%s;%d;%d;%.2f;%.2f;%.2f;%.3f;%.2f,%d,%d,%d,%d" % (automationActive, aktuellerSollwert, aktuellesZeitfenster, 0,0,0,0,0,0,0,0,0 ) 
-    #return "%s;%d;%d" % (automationActive, aktuellerSollwert, aktuellesZeitfenster)
+    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%d;%.2f;%d;%d;%d;%d;%.2f" % (
+        automationActive,
+        aktuellerSollwert,
+        aktuellesZeitfenster,
+        values.get('Ca', 0.0),
+        values.get('Cb', 0.0),
+        values.get('Cc', 0.0),
+        values.get('sdm630_total_power_active', 0),
+        values.get('sdm630_frequency', 0.0),
+        values.get('sdm630_l1_power_active', 0),
+        values.get('sdm630_l2_power_active', 0),
+        values.get('sdm630_l3_power_active', 0),
+        values.get('sdm630_total_power_active', 0),
+        int(aktuellesZeitfenster - (time.time() - lastAction)),
+        0,
+        values.get('sdm530_l1_power_active', 0),
+        values.get('sdm530_l2_power_active', 0),
+        values.get('sdm530_l3_power_active', 0),
+        values.get('sdm530_total_power_active', 0),
+        values.get('sdm530_import_energy_active', 0.0)
+    )
+        
+
 
 
 @webiopi.macro
@@ -410,7 +349,8 @@ def handle_500(error):
 # __name__
 if __name__=="__main__":
     print("")
-    #app.run()
+    app = Flask(__name__)
+    app.run()
     loop()
     #logger.debug(f"l_result  {l_result}")
     #logger.debug("Starting main")
