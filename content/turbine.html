@@ -6,22 +6,36 @@
   <script type="text/javascript" src="/webiopi.js"></script>
   <script type="text/javascript">
  
-    function toggleState(myitem){
-      if(myitem.className == "on") {
-        myitem.className="off";
-        document.getElementById("activeStatus").value = "Off";
-        //document.getElementById('aktuellerSollwert').readOnly = true;
-        document.getElementById('updateValues').disabled = true;
-        webiopi().callMacro("setAutomationActive","Off");
+    function onRadioChange(selectedValue){
+      var neuerSollwert = document.getElementById('neuerSollwert');
+      var neuesZeitfenster = document.getElementById('neuesZeitfenster');
+      var updateValuesButton = document.getElementById('updateValues');
+
+      if(selectedValue === "Off") {
+        neuerSollwert.readOnly = true;
+        neuerSollwert.className = "greyedOutOn";
+        neuesZeitfenster.readOnly = true;
+        neuesZeitfenster.className = "greyedOutOn";
+        updateValuesButton.disabled = true;
+        webiopi().callMacro("setAutomationActive", "Off");
         
-      } else {
-        myitem.className="on";
-        document.getElementById("activeStatus").value = "On"; 
-        //document.getElementById('aktuellerSollwert').readOnly = false;
-        document.getElementById('updateValues').disabled = false;
-        webiopi().callMacro("setAutomationActive","On");
+      } else if (selectedValue === "On") {
+        neuerSollwert.readOnly = false;
+        neuerSollwert.className = "greyedOutOff";
+        neuesZeitfenster.readOnly = false;
+        neuesZeitfenster.className = "greyedOutOff";
+        updateValuesButton.disabled = false;
+        webiopi().callMacro("setAutomationActive", "On");
+      } else if (selectedValue === "Batch") {
+        neuerSollwert.readOnly = false;
+        neuerSollwert.className = "greyedOutOff";
+        neuesZeitfenster.readOnly = false;
+        neuesZeitfenster.className = "greyedOutOff";
+        updateValuesButton.disabled = false; // Annahme: Update-Button ist bei Batch aktiv
+        webiopi().callMacro("setAutomationActive", "Batch");
       }
     }
+    
     function updateValues() {
       var l_neuerSollwert = document.getElementById('neuerSollwert').value;
       var l_neuesZeitfenster = document.getElementById("neuesZeitfenster").value
@@ -31,7 +45,32 @@
   
    var pythonValues = function(macro, args, response) {
     var solls = response.split(";");
-    $("#activeStatus").val(solls[0]);
+    var activeStatusValue = solls[0];
+
+    // Setzt den Radio-Button basierend auf dem aktiven Status
+    if (activeStatusValue.includes("On")) {
+        document.getElementById("activeStatusOn").checked = true;
+        document.getElementById('neuesZeitfenster').readOnly = false;
+        document.getElementById('neuesZeitfenster').className = "greyedOutOff";
+        document.getElementById('neuerSollwert').readOnly = false;
+        document.getElementById('neuerSollwert').className = "greyedOutOff";
+        document.getElementById('updateValues').disabled = false;
+    } else if (activeStatusValue.includes("Off")) {
+        document.getElementById("activeStatusOff").checked = true;
+        document.getElementById('neuesZeitfenster').readOnly = true;
+        document.getElementById('neuesZeitfenster').className = "greyedOutOn";
+        document.getElementById('neuerSollwert').readOnly = true;
+        document.getElementById('neuerSollwert').className = "greyedOutOn";
+        document.getElementById('updateValues').disabled = true;
+    } else if (activeStatusValue.includes("Batch")) {
+        document.getElementById("activeStatusBatch").checked = true;
+        document.getElementById('neuesZeitfenster').readOnly = false; // Annahme: editable bei Batch
+        document.getElementById('neuesZeitfenster').className = "greyedOutOff";
+        document.getElementById('neuerSollwert').readOnly = false; // Annahme: editable bei Batch
+        document.getElementById('neuerSollwert').className = "greyedOutOff";
+        document.getElementById('updateValues').disabled = false; // Annahme: updateable bei Batch
+    }
+    
     $("#aktuellerSollwert").val(solls[1]);
     $("#aktuellesZeitfenster").val(solls[2]);
     $("#Ca").val(solls[4]);
@@ -51,25 +90,6 @@
     document.getElementById("sdm530_l3_power_active").textContent=(solls[16]);
     document.getElementById("sdm530_total_power_active").textContent=(solls[17]);
     document.getElementById("sdm530_import_energy_active").textContent=(solls[18]);
-    if (solls[0].includes("On")){
-      document.getElementById("activeStatus").value = "On";
-      document.getElementById("activeStatus").className = "on";
-      document.getElementById('neuesZeitfenster').readOnly = false;
-      document.getElementById('neuesZeitfenster').className = "greyedOutOff";
-      document.getElementById('neuerSollwert').readOnly = false;
-      document.getElementById('neuerSollwert').className = "greyedOutOff";
-      document.getElementById('updateValues').disabled = false;
-    }
-    if (solls[0].includes("Off")){
-      document.getElementById("activeStatus").value = "Off";
-      document.getElementById("activeStatus").className = "off";
-      document.getElementById('neuesZeitfenster').readOnly = true;
-      document.getElementById('neuesZeitfenster').className = "greyedOutOn";
-      document.getElementById('neuerSollwert').readOnly = true;
-      document.getElementById('neuerSollwert').className = "greyedOutOn";
-      document.getElementById('updateValues').disabled = true;
-      
-    }
                    
    }
 
@@ -355,7 +375,19 @@
 
   <div  style="float: left;margin-right:10px">
     <table style="display:inline-table;" allign="top">
-      <tr> <td>Status</td><td  colspan = "2" ><input type="button" id="activeStatus" value="On" class="on" onclick="toggleState(this)" /></td> </tr>
+      <tr> 
+        <td>Status</td>
+        <td  colspan = "2" >
+          <div id="activeStatusRadioGroup">
+            <input type="radio" id="activeStatusOff" name="activeStatus" value="Off" onchange="onRadioChange(this.value)">
+            <label for="activeStatusOff">Off</label>
+            <input type="radio" id="activeStatusOn" name="activeStatus" value="On" onchange="onRadioChange(this.value)">
+            <label for="activeStatusOn">On</label>
+            <input type="radio" id="activeStatusBatch" name="activeStatus" value="Batch" onchange="onRadioChange(this.value)">
+            <label for="activeStatusBatch">Batch</label>
+          </div>
+        </td> 
+      </tr>
       <tr> <td> Aktueller Sollwert: </td><td  colspan = "2"><input id="aktuellerSollwert"  class="aktuellerWert"/> <br/></td></tr>
       <tr> <td>Stromsensor:</td><td colspan="2" id="current">...</td></tr>
       <tr> <td>Aktuelles Zeitfenster:</td><td> <input id="aktuellesZeitfenster"  class="aktuellerWert"/> <br/></td><td id="countdown">...</td></tr>
@@ -371,15 +403,15 @@
       <td id=Frequenz></td>
     </tr>
     <tr>
-      <td>Strom A[A]</td>
+      <td>Voltage A[V]</td>
       <td id=Ca></td>
     </tr>
     <tr>
-      <td>Strom B[A]</td>
+      <td>Voltage B[V]</td>
       <td id=Cb></td>
     </tr>
     <tr>
-      <td>Strom C[A]</td>
+      <td>Voltage C[V]</td>
       <td id=Cc></td>
     </tr>
     <tr>
@@ -475,4 +507,3 @@
 
 </body>
 </html>
-
