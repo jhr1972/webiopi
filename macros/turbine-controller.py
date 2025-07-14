@@ -11,10 +11,10 @@ import sdm_modbus
 import threading
 
 from pysnmp.hlapi import *
-from flask import Flask # Flask might not be needed if WebIOPi handles all HTTP requests
+from flask import Flask 
 sys.path.insert(0,"/home/pi/webiopi/macros")
-from Basics  import * # Assuming this contains your Level class
-from webiopi.utils.types import values # Access to WebIOPi's global values dictionary
+from Basics  import * # Make sure Basics.py exists and works if you use it for Level
+from webiopi.utils.types import values # Assuming 'values' is defined and used correctly
 from pymodbus.register_read_message import ReadInputRegistersResponse
 from pymodbus.payload import BinaryPayloadDecoder
 from pymodbus.constants import Endian
@@ -24,29 +24,26 @@ level = "init"
 power = "init"
 rpm = "init"
 deltaForAction = 1
-lastAction = None # Renamed to last_automation_action_time for clarity in "On" mode
+last_automation_action_time = None 
 impulsdauer = 3
 impulsstart = 0
 
 # Global variables for automation mode
 aktuellerSollwert = 40
-aktuellesZeitfenster = 1800 # Time window for "On" mode automation checks
-automationActive = "Off" # Initial state should be "Off" by default
+aktuellesZeitfenster = 1800 
+automationActive = "Off" # Initial state should be "Off"
 
-# Batch Mode Specific Variables ---
-batch_state = "WAITING" # "WAITING" or "RUNNING"
+# --- Batch Mode Specific Variables ---
+batch_state = "WAITING" 
 batch_operation_start_time = None
-batch_next_state_change_time = None # When the next state transition is scheduled
+batch_next_state_change_time = None 
 
-# Batch configuration parameters 
-WATER_LEVEL_HIGH_THRESHOLD =41.0 #  Water level (percentage or actual units) to start running
-WATER_LEVEL_LOW_THRESHOLD = 35.0  #  Water level to stop running
-MAX_BATCH_RUN_DURATION_SECONDS = 4 * 3600 # Max run duration in seconds (4 hours)
-MIN_BATCH_WAIT_DURATION_SECONDS = 6 * 3600 #  Min wait duration in seconds (6 hours)
+# Batch configuration parameters (ADJUST THESE VALUES FOR YOUR PLANT)
+WATER_LEVEL_HIGH_THRESHOLD = 70.0 
+WATER_LEVEL_LOW_THRESHOLD = 25.0  
+MAX_BATCH_RUN_DURATION_SECONDS = 4 * 3600 
+MIN_BATCH_WAIT_DURATION_SECONDS = 6 * 3600 
 
-
-
-# global app = Flask(__name__) # This line will cause an error if uncommented here
 l_result = []
 
 # SDM Modbus Register Definitions (as in your original code)
@@ -54,7 +51,7 @@ regs = [
    ( 'P1'     ,0x0c, '%6.2f',2 ), # Active Power ("Wirkleistung") Phase 1 [W]
    ( 'P2'     ,0x000e, '%6.2f',2 ), # Active Power ("Wirkleistung") Phase 2 [W]
    ( 'P3'     ,0x0010, '%6.2f',2 ), #  Active Power ("Wirkleistung") Phase 3 [W]
-   ( 'Ca'     ,0x64, '%6.2f',2), # Current Phase A[A]
+   ( 'Ca'     ,0x64, '%6.2f',2 ), # Current Phase A[A]
    ( 'Cb'     ,0x65, '%6.2f',2 ), # Current Phase B[A]
    ( 'Cc'     ,0x66, '%6.2f',2 ), # Current Phase C[A]
    ( 'Pa_active',0x67, '%6.3f',3 ), # Active Power ("Wirkleistung") Phase A [W]
@@ -96,74 +93,65 @@ fh.setFormatter(formatter)
 logger.addHandler(ch)
 logger.addHandler(fh)
 
-# Assuming Level class is in Basics.py as you indicated
-waterlevel = Level(300,"level",logger) # maxAge
-powerlevel = Level(100,"power",logger) # maxAge
+# Assuming Level class is correctly imported from Basics
+waterlevel = Level(300,"level",logger) 
+powerlevel = Level(100,"power",logger) 
 
 
 # --- Helper Function for Flap Control ---
-# This function will encapsulate the actual GPIO operations for flap control.
-# This is a critical function; ensure your GPIO pins are correct and safe.
 def control_flaps(action):
     """
     Controls the turbine flaps.
     'action' can be 'open_full', 'close_full', 'open_increment', 'close_increment', 'stop'.
+    'stop' explicitly sets pins LOW.
     """
+    global impulsstart
+    
+    KLEIN_AUF = 19
+    KLEIN_ZU = 26
+    GROSS_AUF = 16
+    GROSS_ZU = 20
+
     if action == "open_full":
-        logger.info("Opening flaps to full (GPIO %d active)", 19)
-        # Assuming 19 opens "kleine Klappe" fully
-        # You might need to add logic for "grosse Klappe" too if "full" means both
-        GPIO.output(19, True) # Activate open
-        GPIO.output(26, False) # Deactivate close
-        # Add a delay or sensor feedback to ensure it fully opens, then turn off GPIO
-        # For simplicity, we'll assume it's momentary or handled by subsequent calls
-        # For continuous "open_full" you might need a different approach
-        time.sleep(impulsdauer) # Keep active for impulsdauer
-        GPIO.output(19, False) # Deactivate open
-        logger.info("Flaps open command sent.")
+        logger.info("Command: Open flaps to full (GPIO %d)", KLEIN_AUF)
+        GPIO.output(KLEIN_AUF, True) # Activate open
+        GPIO.output(KLEIN_ZU, False) # Deactivate close
+        GPIO.output(GROSS_AUF, True) # Also open large flap fully
+        GPIO.output(GROSS_ZU, False)
 
     elif action == "close_full":
-        logger.info("Closing flaps to full (GPIO %d active)", 26)
-        # Assuming 26 closes "kleine Klappe" fully
-        GPIO.output(26, True) # Activate close
-        GPIO.output(19, False) # Deactivate open
-        time.sleep(impulsdauer) # Keep active for impulsdauer
-        GPIO.output(26, False) # Deactivate close
-        logger.info("Flaps close command sent.")
-
+        logger.info("Command: Close flaps to full (GPIO %d)", KLEIN_ZU)
+        GPIO.output(KLEIN_ZU, True) # Activate close
+        GPIO.output(KLEIN_AUF, False) # Deactivate open
+        GPIO.output(GROSS_ZU, True) # Also close large flap fully
+        GPIO.output(GROSS_AUF, False)
+        
     elif action == "open_increment":
-        logger.debug("Incrementally opening small flap (GPIO %d active)", 19)
-        # Implement logic for incremental opening, potentially using impulsstart/impulsdauer
-        # and checking current flap position if available.
-        klappeBewegen("up") # Re-use your existing incremental function
+        logger.debug("Command: Incrementally opening small flap")
+        klappeBewegen(KLEIN_AUF, KLEIN_ZU) 
     
     elif action == "close_increment":
-        logger.debug("Incrementally closing small flap (GPIO %d active)", 26)
-        # Implement logic for incremental closing
-        klappeBewegen("down") # Re-use your existing incremental function
+        logger.debug("Command: Incrementally closing small flap")
+        klappeBewegen(KLEIN_ZU, KLEIN_AUF) 
 
     elif action == "stop":
-        logger.info("Stopping all flap movements.")
-        GPIO.output(19, False)
-        GPIO.output(26, False)
-        GPIO.output(16, False) # Assuming these are for gross
-        GPIO.output(20, False)
-        global impulsstart
-        impulsstart = 0 # Reset impulse timer if it was used
-
-    # You might also want to add control for the "Gross-Klappe" (GPIO 16, 20) here
-    # depending on how "full open/close" translates to your specific setup.
-
+        logger.info("Command: Stopping all flap movements.")
+        # This action explicitly forces all associated pins LOW.
+        GPIO.output(KLEIN_AUF, False)
+        GPIO.output(KLEIN_ZU, False)
+        GPIO.output(GROSS_AUF, False)
+        GPIO.output(GROSS_ZU, False)
+        
+        impulsstart = 0 # Reset impulse timer
 
 # --- Main WebIOPi Loop ---
 def loop():
     global l_result, automationActive, batch_state, batch_operation_start_time, batch_next_state_change_time
     
-    # Initialize l_result if empty
+    # Read SNMP and SDM meters in every loop iteration
     if not l_result:
-        l_result = [""] * 100 # Pre-fill with empty strings
+        l_result = [""] * 100 
 
-    # Fetch SNMP values
     g = bulkCmd(
         SnmpEngine(),
         CommunityData('public'),
@@ -197,30 +185,34 @@ def loop():
             break
         except Exception as e:
             logger.error(f"Error fetching SNMP OID {i}: {e}")
-            break # Exit loop if a significant error occurs
+            break 
 
-    # Update water level for stability check
     waterlevel.addLevel(level)
+    read_sdm530()
+    read_sdm630() 
 
-    # --- Automation Logic based on automationActive mode ---
     current_time = datetime.datetime.now()
 
+    # --- Automation Logic based on automationActive ---
     if automationActive == "On":
-        automation() # Your existing continuous automation logic
+        automation() 
         logger.debug("Automation mode: On")
 
     elif automationActive == "Batch":
         logger.debug(f"Automation mode: Batch. Current state: {batch_state}")
-        current_water_level_val = float(level) # Assuming 'level' from SNMP is numeric
+        try:
+            current_water_level_val = float(level) 
+        except ValueError:
+            logger.error(f"Could not convert water level '{level}' to float. Using 0.0 for safety.")
+            current_water_level_val = 0.0
 
         if batch_state == "WAITING":
-            # Check if enough time has passed since last run/transition AND water level is high
             if (batch_next_state_change_time is None or current_time >= batch_next_state_change_time) \
                and current_water_level_val >= WATER_LEVEL_HIGH_THRESHOLD:
                 logger.info("BATCH: Water level (%.2f) >= HIGH threshold (%.2f) and wait time passed. Starting RUNNING state.",
                             current_water_level_val, WATER_LEVEL_HIGH_THRESHOLD)
                 
-                control_flaps("open_full") # Open flaps fully
+                control_flaps("open_full") 
                 batch_state = "RUNNING"
                 batch_operation_start_time = current_time
                 batch_next_state_change_time = current_time + datetime.timedelta(seconds=MAX_BATCH_RUN_DURATION_SECONDS)
@@ -229,20 +221,19 @@ def loop():
                 logger.debug(f"BATCH: WAITING. Water level: {current_water_level_val}. Next start: {batch_next_state_change_time if batch_next_state_change_time else 'N/A'}")
 
         elif batch_state == "RUNNING":
-            # Check if water level is too low OR max run duration is reached
             if current_water_level_val <= WATER_LEVEL_LOW_THRESHOLD:
                 logger.info("BATCH: Water level (%.2f) <= LOW threshold (%.2f). Stopping RUNNING state.",
                             current_water_level_val, WATER_LEVEL_LOW_THRESHOLD)
-                control_flaps("close_full") # Close flaps fully
+                control_flaps("close_full") 
                 batch_state = "WAITING"
-                batch_operation_start_time = None # Reset for next cycle
+                batch_operation_start_time = None 
                 batch_next_state_change_time = current_time + datetime.timedelta(seconds=MIN_BATCH_WAIT_DURATION_SECONDS)
                 logger.info(f"BATCH: Next state change (start after wait) scheduled for: {batch_next_state_change_time.strftime('%Y-%m-%d %H:%M:%S')}")
             elif current_time >= batch_next_state_change_time:
                 logger.info("BATCH: Max run duration reached. Stopping RUNNING state.")
-                control_flaps("close_full") # Close flaps fully
+                control_flaps("close_full") 
                 batch_state = "WAITING"
-                batch_operation_start_time = None # Reset for next cycle
+                batch_operation_start_time = None 
                 batch_next_state_change_time = current_time + datetime.timedelta(seconds=MIN_BATCH_WAIT_DURATION_SECONDS)
                 logger.info(f"BATCH: Next state change (start after wait) scheduled for: {batch_next_state_change_time.strftime('%Y-%m-%d %H:%M:%S')}")
             else:
@@ -250,18 +241,14 @@ def loop():
                 logger.debug(f"BATCH: RUNNING. Water level: {current_water_level_val}. Time remaining: {remaining_run_time}")
 
     else: # automationActive == "Off"
-        logger.debug("Automation mode: Off. Skipping automation.")
-        control_flaps("stop") # Ensure flaps are stopped when off
-
-    # Read SDM meters
-    read_sdm530()
-    read_sdm630() # Ensure this is always called to update values for frontend
+        # When automation is Off, the loop should do nothing to interfere with manual GPIO states.
+        # The control_flaps("stop") command is intentionally NOT called here.
+        logger.debug("Automation mode: Off. Allowing manual GPIO control. No flap actions by script.")
     
     webiopi.sleep(0.5)
 
 
 def read_sdm630 ( ):
-    # Your existing sdm630 reading logic
     meter = sdm_modbus.SDM630(
         device='/dev/ttyUSB1',
         stopbits=1,
@@ -279,11 +266,9 @@ def read_sdm630 ( ):
                values['sdm630_'+k]=v
     except Exception as e:
         logger.error(f"Error reading SDM630: {e}")
-        # Optionally set default/error values in 'values' if reading fails
 
 
 def read_sdm530 ( ):
-    # Your existing sdm530 reading logic
     meter = sdm_modbus.SDM630(
         device='/dev/ttyUSB0',
         stopbits=1,
@@ -301,75 +286,77 @@ def read_sdm530 ( ):
                values['sdm530_'+k]=v
     except Exception as e:
         logger.error(f"Error reading SDM530: {e}")
-        # Optionally set default/error values in 'values' if reading fails
 
 def automation():
     """
     Your existing continuous automation logic for "On" mode.
     This function controls flaps based on water level and power output to maintain a setpoint.
     """
-    global last_automation_action_time # Using the clearer name
+    global last_automation_action_time 
     if (last_automation_action_time is None):
-        last_automation_action_time = int(time.time() - aktuellesZeitfenster)
+        last_automation_action_time = time.time() - aktuellesZeitfenster 
         logger.debug("Initial setting of last_automation_action_time: %s", last_automation_action_time)
 
     if (time.time() - last_automation_action_time > aktuellesZeitfenster):
-        # Ensure 'level' is numeric for comparison
-        current_level_val = float(level) 
+        try:
+            current_level_val = float(level) 
+        except ValueError:
+            logger.error(f"Could not convert water level '{level}' to float. Using 0.0 for safety.")
+            current_level_val = 0.0
+
         delta = current_level_val - aktuellerSollwert
         
-        # Power threshold for closing flaps (to avoid running dry)
         MIN_POWER_FOR_OPERATION = 999 
 
         if (abs(delta) >= deltaForAction and delta > 0 and waterlevel.isStable()):
             logger.info("Klappe muss hoch (level: %.2f, soll: %d, delta: %.2f)", current_level_val, aktuellerSollwert, delta)
-            control_flaps("open_increment") # Use the unified control_flaps
+            control_flaps("open_increment") 
         elif (abs(delta) >= deltaForAction and delta < 0 and waterlevel.isStable() and powerlevel.getAverageValues() >= MIN_POWER_FOR_OPERATION):
             logger.info("Klappe muss runter (level: %.2f, soll: %d, delta: %.2f)", current_level_val, aktuellerSollwert, delta)
-            control_flaps("close_increment") # Use the unified control_flaps
+            control_flaps("close_increment") 
         elif (abs(delta) >= deltaForAction and delta < 0 and waterlevel.isStable() and powerlevel.getAverageValues() < MIN_POWER_FOR_OPERATION):
             logger.info("Klappe müsste runter, aber average Power %d unter Minimum %d", powerlevel.getAverageValues(), MIN_POWER_FOR_OPERATION)
-            # Potentially close flaps more aggressively or halt operations if power is too low
-            control_flaps("stop") # Or close incrementally to prevent damage
+            control_flaps("stop") 
         else:
             logger.debug("Keine Klappenbewegung notwendig. Delta: %.2f, Water Stable: %s", delta, waterlevel.isStable())
-            control_flaps("stop") # Ensure flaps stop moving if no action is needed
+            control_flaps("stop") 
         
-        last_automation_action_time = int(time.time()) # Update last action time
+        last_automation_action_time = time.time() 
 
     else:
         time_until_next_check = int(aktuellesZeitfenster - (time.time() - last_automation_action_time))
         logger.info("No Action due to latency. Next check in %d seconds", time_until_next_check)
-        control_flaps("stop") # Stop flaps if in latency period
+        control_flaps("stop") # Still stop if no action is needed within the window
 
-
-def klappeBewegen(direction):
+def klappeBewegen(active_pin, inactive_pin):
     """
     Handles incremental flap movement for a defined impulse duration.
     This function is primarily for the "On" automation mode.
+    It now accepts the active and inactive pin numbers.
+    The goal is to maintain the active_pin HIGH for impulsdauer, then set it LOW.
     """
     global impulsstart
-    # No direct global lastAction update here, it's done in `automation()`
     
-    if impulsstart == 0:
-        impulsstart = int(time.time())
-        logger.debug(f"Starting impulse for direction: {direction}")
+    # Only initiate a new impulse if no impulse is currently active, or if it's a new command
+    # This prevents re-triggering an impulse if it's already active due to automation
+    if impulsstart == 0: # Start a new impulse
+        impulsstart = time.time()
+        logger.debug(f"Starting impulse for pin {active_pin} (active), {inactive_pin} (inactive)")
+        GPIO.output(active_pin, True)
+        GPIO.output(inactive_pin, False) 
     
-    if int(time.time()) - impulsstart < impulsdauer:
-        if direction == "up":
-            GPIO.output(19, True)  # Kleine Klappe auf
-            GPIO.output(26, False)
-        elif direction == "down":
-            GPIO.output(26, True)  # Kleine Klappe zu
-            GPIO.output(19, False)
-        else:
-            logger.error("klappeBewegen: Direction undefined or invalid: %s", direction)
-            control_flaps("stop") # Stop to prevent unexpected behavior
+    # Check if the impulse duration is ongoing
+    if (time.time() - impulsstart) < impulsdauer:
+        pass # Pin stays HIGH
     else:
-        logger.debug(f"Impulse duration ({impulsdauer}s) for {direction} finished. Stopping flap movement.")
-        GPIO.output(19, False)
-        GPIO.output(26, False)
-        impulsstart = 0 # Reset for the next impulse
+        logger.debug(f"Impulse duration ({impulsdauer}s) for pin {active_pin} finished. Stopping flap movement.")
+        GPIO.output(active_pin, False)
+        impulsstart = 0 
+
+    # Ensure the inactive pin is LOW at all times when not actively needed.
+    if GPIO.input(inactive_pin) == GPIO.HIGH:
+        GPIO.output(inactive_pin, False)
+        logger.debug(f"Ensuring inactive pin {inactive_pin} is LOW.")
 
 
 @webiopi.macro
@@ -386,40 +373,34 @@ def getRpm():
 
 @webiopi.macro
 def setAutomationActive(l_automationActive):
-    """
-    Sets the automation mode for the turbine.
-    Possible values: "On", "Off", "Batch".
-    """
     global automationActive, batch_state, batch_operation_start_time, batch_next_state_change_time
     logger.info(f"setAutomationActive called with status: {l_automationActive}")
 
-    # Set new mode
+    # Set new mode unconditionally
     automationActive = l_automationActive
+    logger.debug(f"automationActive set to: {automationActive}") # Log the new state
 
-    # Reset batch specific variables if not entering batch mode
-    if automationActive != "Batch":
-        batch_state = "WAITING"
+    # When switching INTO "On" or "Batch" mode, we explicitly ensure a safe start.
+    if automationActive in ["On", "Batch"]:
+        control_flaps("close_full") # Explicitly close all automation-controlled flaps
+        control_flaps("stop") # Ensure all motors are off
+        logger.info(f"Automation set to {automationActive}. Flaps explicitly closed and stopped for transition.")
+        if automationActive == "Batch":
+            batch_state = "WAITING"
+            batch_operation_start_time = None
+            batch_next_state_change_time = datetime.datetime.now() # Allow immediate check for starting if conditions met
+    else: # automationActive == "Off"
+        # When switching TO "Off" mode, automation also explicitly stops everything it controls.
+        # This brings the system to a safe, non-automated state.
+        control_flaps("close_full") # Ensure flaps are closed when automation is off
+        control_flaps("stop") # Ensure all motors are off
+        batch_state = "WAITING" # Reset batch state
         batch_operation_start_time = None
         batch_next_state_change_time = None # Clear any scheduled times
-        control_flaps("close_full") # Ensure flaps are closed when switching out of Batch/On
-        logger.info(f"Automation set to {automationActive}. Flaps commanded to close.")
-    elif automationActive == "Batch":
-        # When entering Batch mode, ensure initial state is WAITING and flaps are closed
-        batch_state = "WAITING"
-        batch_operation_start_time = None
-        batch_next_state_change_time = datetime.datetime.now() # Allow immediate check for starting if conditions met
-        control_flaps("close_full") # Ensure flaps are closed before starting batch cycle
-        logger.info(f"Automation set to Batch. Initializing to WAITING state.")
-
-    # Stop any ongoing flap movements immediately when changing mode
-    control_flaps("stop")
+        logger.info(f"Automation set to Off. Automation-controlled flaps commanded to close and stop. Manual control enabled.")
 
 @webiopi.macro
 def setValues(l_aktuellerSollwert,l_aktuellesZeitfenster ):
-    """
-    Sets the target setpoint and time window for 'On' automation mode.
-    These values are only relevant when automationActive is "On".
-    """
     global aktuellerSollwert, aktuellesZeitfenster
     aktuellerSollwert = int(l_aktuellerSollwert)
     aktuellesZeitfenster = int(l_aktuellesZeitfenster)
@@ -428,13 +409,8 @@ def setValues(l_aktuellerSollwert,l_aktuellesZeitfenster ):
 
 @webiopi.macro
 def getValues():
-    """
-    Returns current system values to the frontend.
-    The string format must match what the HTML frontend expects.
-    """
     global automationActive, aktuellerSollwert, aktuellesZeitfenster, batch_state, batch_next_state_change_time, last_automation_action_time
     
-    # Calculate countdown/status based on automation mode
     countdown_str = "N/A"
     if automationActive == "On":
         if last_automation_action_time:
@@ -455,127 +431,81 @@ def getValues():
                 time_left_seconds = int((batch_next_state_change_time - current_time).total_seconds())
                 countdown_str = f"Run: {str(datetime.timedelta(seconds=time_left_seconds)).split('.')[0]}"
             else:
-                countdown_str = "Running (No End)" # Should not happen if MAX_BATCH_RUN_DURATION_SECONDS is set
+                countdown_str = "Running (No End)" 
     
-    # Ensure all values exist in 'values' dictionary to prevent KeyError
-    # Provide default 0 or "" if not found (e.g., if SDM reader failed)
-    current_val = values.get('current', 0.0) # Placeholder for current sensor
+    current_val = values.get('current', 0.0) 
     if isinstance(current_val, (int, float)):
         formatted_current = f"{current_val:.2f}"
     else:
         formatted_current = str(current_val)
 
+    # Make sure your Python macro returns the automationActive status as the first element
+    # This is critical for the JavaScript logic.
     return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%s;%s;%d;%d;%d;%d;%.2f" % (
-        automationActive,
+        automationActive, # This must be the first element
         aktuellerSollwert,
         aktuellesZeitfenster,
-        values.get('sdm630_l1_voltage', 1.0), # Voltage Phase A
-        values.get('sdm630_l2_voltage', 2.0), # Voltage Phase B
-        values.get('sdm630_l3_voltage', 3.0), # Voltage Phase C
-        values.get('sdm630_total_power_active', 0), # Total Power from SDM630
-        values.get('sdm630_frequency', 0.0), # Frequency from SDM630
-        values.get('sdm630_l1_power_active', 0), # L1 Power from SDM630
-        values.get('sdm630_l2_power_active', 0), # L2 Power from SDM630
-        values.get('sdm630_l3_power_active', 0), # L3 Power from SDM630
-        values.get('sdm630_total_power_active', 0), # Total Power from SDM630
-        countdown_str, # Dynamic countdown/status for batch/on mode
-        formatted_current, # General current sensor (from your original code)
-        values.get('sdm530_l1_power_active', 0), # L1 Power from SDM530
-        values.get('sdm530_l2_power_active', 0), # L2 Power from SDM530
-        values.get('sdm530_l3_power_active', 0), # L3 Power from SDM530
-        values.get('sdm530_total_power_active', 0), # Total Power from SDM530
-        values.get('sdm530_import_energy_active', 0.0) # Imported Energy from SDM530
+        values.get('sdm630_l1_voltage', 0.0), 
+        values.get('sdm630_l2_voltage', 0.0), 
+        values.get('sdm630_l3_voltage', 0.0), 
+        values.get('sdm630_total_power_active', 0), 
+        values.get('sdm630_frequency', 0.0), 
+        values.get('sdm630_l1_power_active', 0), 
+        values.get('sdm630_l2_power_active', 0), 
+        values.get('sdm630_l3_power_active', 0), 
+        values.get('sdm630_total_power_active', 0), 
+        countdown_str, 
+        formatted_current, 
+        values.get('sdm530_l1_power_active', 0), 
+        values.get('sdm530_l2_power_active', 0), 
+        values.get('sdm530_l3_power_active', 0), 
+        values.get('sdm530_total_power_active', 0), 
+        values.get('sdm530_import_energy_active', 0.0) 
     )
         
 @webiopi.macro
 def getAllSmtp():
     mystring = ''
     for x in l_result:
-        # x.replace(" ", "") # This might not be necessary if split('=')[1] already cleans spaces
         mystring += x + ';'
     return mystring
 
 @webiopi.macro
 def getAutomationActive():
+    global automationActive # Ensure this macro directly returns the current global state
     return automationActive
 
 # --- WebIOPi Setup and Teardown ---
 def setup():
-    # Configure GPIO pins. These should be outputs to control relays for the flaps.
-    GPIO.setFunction(19, GPIO.OUT) # Klein-Auf
-    GPIO.setFunction(26, GPIO.OUT) # Klein-Zu
-    GPIO.setFunction(16, GPIO.OUT) # Gross-Auf
-    GPIO.setFunction(20, GPIO.OUT) # Gross-Zu
-    GPIO.setFunction(21, GPIO.OUT) # Reset
+    # Make sure all flap GPIOs are defined as outputs
+    GPIO.setFunction(19, GPIO.OUT) 
+    GPIO.setFunction(26, GPIO.OUT) 
+    GPIO.setFunction(16, GPIO.OUT) 
+    GPIO.setFunction(20, GPIO.OUT) 
+    GPIO.setFunction(21, GPIO.OUT) # Assuming this is also an output
 
-    # Ensure all flap control pins are OFF initially to prevent unintended movements
+    # Initialize all GPIOs to LOW (off) at startup for safety
     GPIO.output(19, GPIO.LOW)
     GPIO.output(26, GPIO.LOW)
     GPIO.output(16, GPIO.LOW)
     GPIO.output(20, GPIO.LOW)
-    GPIO.output(21, GPIO.LOW) # Assuming reset is pulsed later
+    GPIO.output(21, GPIO.LOW) 
 
-    # Initialize last_automation_action_time for the "On" mode
     global last_automation_action_time
-    last_automation_action_time = time.time() - aktuellesZeitfenster # Set it to trigger immediately at start
+    last_automation_action_time = time.time() - aktuellesZeitfenster 
 
     logger.info("WebIOPi setup complete. GPIOs initialized.")
 
 def destroy():
-    # Clean up GPIOs when WebIOPi stops
+    # Ensure all automation-controlled GPIOs are set to LOW on shutdown
     GPIO.output(19, GPIO.LOW)
     GPIO.output(26, GPIO.LOW)
     GPIO.output(16, GPIO.LOW)
     GPIO.output(20, GPIO.LOW)
-    GPIO.output(21, GPIO.LOW)
+    GPIO.output(21, GPIO.LOW) # Assuming this should also be off on destroy
     GPIO.cleanup()
     logger.info("WebIOPi destroy complete. GPIOs cleaned up.")
 
-# Flask app part (if you're using Flask in parallel to WebIOPi, which is unusual)
-# If WebIOPi is serving the macros, you typically don't need a separate Flask app for the same purpose.
-# If you are using Flask for other REST endpoints, keep it, otherwise you can remove it.
-# If you keep it, make sure it doesn't block WebIOPi's loop or port.
-# The `app.run()` line will typically block, so it's not ideal inside `if __name__ == "__main__":`
-# for a WebIOPi script. WebIOPi itself manages the main loop.
-
-# @app.route('/test/')
-# def test():
-#     return 'rest'
-
-# @app.route('/test1/')
-# def test1():
-#     1/0
-#     return 'rest'
-
-# @app.errorhandler(500)
-# def handle_500(error):
-#     return str(error), 500          
-    
 if __name__=="__main__":
-    # This block is usually for testing the script outside of WebIOPi.
-    # WebIOPi directly calls setup(), loop(), and destroy().
     print("This script is designed to run with WebIOPi. Running it directly might not behave as expected.")
-    print("If you intend to run a Flask app, ensure it's not conflicting with WebIOPi's port.")
-    
-    # If you must run Flask from here, you would typically use a separate thread or process.
-    # Or, the WebIOPi server itself could be configured to host Flask.
-    # Example (not recommended for simple WebIOPi macro scripts due to complexity):
-    # import multiprocessing
-    # def run_flask():
-    #     app = Flask(__name__)
-    #     app.run(port=5000) # Use a different port than WebIOPi (default 8000)
-    #
-    # flask_process = multiprocessing.Process(target=run_flask)
-    # flask_process.start()
-    
-    # For WebIOPi, you just need this script in your WebIOPi macros folder.
-    # The `loop()` function will be called repeatedly by WebIOPi.
-    # `setup()` and `destroy()` are also called by WebIOPi.
-    
-    # If running directly for quick testing (without WebIOPi environment):
-    # setup()
-    # while True:
-    #     loop()
-    
-    # Removed the problematic app.run() here as it conflicts with WebIOPi's main loop.
     pass

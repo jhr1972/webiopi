@@ -6,78 +6,109 @@
   <script type="text/javascript" src="/webiopi.js"></script>
   <script type="text/javascript">
  
+    // Variable to hold the current automation mode from the backend
+    var currentAutomationMode = "Off"; // Initialize to "Off" or a safe default
+
     function onRadioChange(selectedValue){
       var neuerSollwert = document.getElementById('neuerSollwert');
       var neuesZeitfenster = document.getElementById('neuesZeitfenster');
       var updateValuesButton = document.getElementById('updateValues');
 
+      // Update UI elements immediately based on selected radio button
       if(selectedValue === "Off") {
         neuerSollwert.readOnly = true;
         neuerSollwert.className = "greyedOutOn";
         neuesZeitfenster.readOnly = true;
         neuesZeitfenster.className = "greyedOutOn";
         updateValuesButton.disabled = true;
-        webiopi().callMacro("setAutomationActive", "Off");
-        
-      } else if (selectedValue === "On") {
+        toggleManualFlapButtons(true); // Enable manual buttons
+      } else { // "On" or "Batch"
         neuerSollwert.readOnly = false;
         neuerSollwert.className = "greyedOutOff";
         neuesZeitfenster.readOnly = false;
         neuesZeitfenster.className = "greyedOutOff";
         updateValuesButton.disabled = false;
-        webiopi().callMacro("setAutomationActive", "On");
-      } else if (selectedValue === "Batch") {
-        neuerSollwert.readOnly = false;
-        neuerSollwert.className = "greyedOutOff";
-        neuesZeitfenster.readOnly = false;
-        neuesZeitfenster.className = "greyedOutOff";
-        updateValuesButton.disabled = false; // Annahme: Update-Button ist bei Batch aktiv
-        webiopi().callMacro("setAutomationActive", "Batch");
+        toggleManualFlapButtons(false); // Disable manual buttons
       }
+
+      // Send the command to the backend
+      webiopi().callMacro("setAutomationActive", selectedValue);
     }
     
     function updateValues() {
       var l_neuerSollwert = document.getElementById('neuerSollwert').value;
       var l_neuesZeitfenster = document.getElementById("neuesZeitfenster").value
-      var soll = [l_neuerSollwert,l_neuesZeitfenster]
+      var soll = [l_neuerSuerwert,l_neuesZeitfenster]
       webiopi().callMacro("setValues",soll);
+    }
+
+    // Function to enable/disable specific manual flap buttons
+    function toggleManualFlapButtons(enable) {
+        var buttonsToControl = [
+            document.getElementById('gpio19'), // Klein-Auf
+            document.getElementById('gpio26'), // Klein-Zu
+            document.getElementById('gpio16'), // Gross-Auf
+            document.getElementById('gpio20')  // Gross-Zu
+        ];
+
+        buttonsToControl.forEach(function(button) {
+            if (button) { // Check if the button element exists
+                button.disabled = !enable;
+                if (enable) {
+                    button.classList.remove("greyedOutOn");
+                } else {
+                    button.classList.add("greyedOutOn");
+                }
+            }
+        });
+        // console.log("Manual flap buttons " + (enable ? "enabled" : "disabled") + "."); // Keep for debugging, remove for production
     }
   
    var pythonValues = function(macro, args, response) {
     var solls = response.split(";");
     var activeStatusValue = solls[0];
 
-    // Setzt den Radio-Button basierend auf dem aktiven Status
-    if (activeStatusValue.includes("On")) {
-        document.getElementById("activeStatusOn").checked = true;
-        document.getElementById('neuesZeitfenster').readOnly = false;
-        document.getElementById('neuesZeitfenster').className = "greyedOutOff";
-        document.getElementById('neuerSollwert').readOnly = false;
-        document.getElementById('neuerSollwert').className = "greyedOutOff";
-        document.getElementById('updateValues').disabled = false;
-    } else if (activeStatusValue.includes("Off")) {
-        document.getElementById("activeStatusOff").checked = true;
-        document.getElementById('neuesZeitfenster').readOnly = true;
-        document.getElementById('neuesZeitfenster').className = "greyedOutOn";
-        document.getElementById('neuerSollwert').readOnly = true;
-        document.getElementById('neuerSollwert').className = "greyedOutOn";
-        document.getElementById('updateValues').disabled = true;
-    } else if (activeStatusValue.includes("Batch")) {
-        document.getElementById("activeStatusBatch").checked = true;
-        document.getElementById('neuesZeitfenster').readOnly = false; // Annahme: editable bei Batch
-        document.getElementById('neuesZeitfenster').className = "greyedOutOff";
-        document.getElementById('neuerSollwert').readOnly = false; // Annahme: editable bei Batch
-        document.getElementById('neuerSollwert').className = "greyedOutOff";
-        document.getElementById('updateValues').disabled = false; // Annahme: updateable bei Batch
+    // --- CRITICAL CHANGE HERE: Only update radio buttons if the backend's state differs ---
+    // This prevents the flickering and fighting over the radio button selection
+    if (activeStatusValue !== currentAutomationMode) {
+        currentAutomationMode = activeStatusValue; // Update our client-side tracking
+        
+        if (activeStatusValue.includes("On")) {
+            document.getElementById("activeStatusOn").checked = true;
+            document.getElementById('neuesZeitfenster').readOnly = false;
+            document.getElementById('neuesZeitfenster').className = "greyedOutOff";
+            document.getElementById('neuerSollwert').readOnly = false;
+            document.getElementById('neuerSollwert').className = "greyedOutOff";
+            document.getElementById('updateValues').disabled = false;
+            toggleManualFlapButtons(false); // Disable manual buttons
+        } else if (activeStatusValue.includes("Off")) {
+            document.getElementById("activeStatusOff").checked = true;
+            document.getElementById('neuesZeitfenster').readOnly = true;
+            document.getElementById('neuesZeitfenster').className = "greyedOutOn";
+            document.getElementById('neuerSollwert').readOnly = true;
+            document.getElementById('neuerSollwert').className = "greyedOutOn";
+            document.getElementById('updateValues').disabled = true;
+            toggleManualFlapButtons(true); // Enable manual buttons
+        } else if (activeStatusValue.includes("Batch")) {
+            document.getElementById("activeStatusBatch").checked = true;
+            document.getElementById('neuesZeitfenster').readOnly = false; 
+            document.getElementById('neuesZeitfenster').className = "greyedOutOff";
+            document.getElementById('neuerSollwert').readOnly = false; 
+            document.getElementById('neuerSollwert').className = "greyedOutOff";
+            document.getElementById('updateValues').disabled = false; 
+            toggleManualFlapButtons(false); // Disable manual buttons
+        }
     }
-    
+    // Else: If activeStatusValue === currentAutomationMode, do nothing with the radio buttons
+    // This prevents the flicker when the mode hasn't changed.
+
+    // Update other display values regardless of mode
     $("#aktuellerSollwert").val(solls[1]);
     $("#aktuellesZeitfenster").val(solls[2]);
     $("#Ca").val(solls[4]);
     document.getElementById("Ca").textContent=(solls[3]);
     document.getElementById("Cb").textContent=(solls[4]);
     document.getElementById("Cc").textContent=(solls[5]);
-    //    document.getElementById("WirkLeistung").textContent=(solls[6]);
     document.getElementById("Frequenz").textContent=(solls[7]);
     document.getElementById("spa").textContent=(solls[8]);
     document.getElementById("spb").textContent=(solls[9]);
@@ -93,9 +124,7 @@
                    
    }
 
- 
    var smtpValues = function(macro, args, response) { 
-       //document.getElementById("smtp0").textContent = "test"+Math.random().toString();;
        var smtps = response.split(";");
                    //31 klein oben
                    //32 klein unten
@@ -152,15 +181,11 @@
        setInterval(TimerInterval,1000);
     }
   
-  
-     
-  
-  
     webiopi().ready(function() {
       TimerInterval();
       startInterval();
-      webiopi().callMacro("getValues", [], pythonValues);
-      webiopi().callMacro("getAllSmtp", [], smtpValues);
+      // webiopi().callMacro("getValues", [], pythonValues); // Already called by TimerInterval
+      // webiopi().callMacro("getAllSmtp", [], smtpValues); // Already called by TimerInterval
   
       var button19 = webiopi().createGPIOButton(19, "Klein-Auf");
       var button26 = webiopi().createGPIOButton(26, "Klein-Zu");
@@ -171,14 +196,28 @@
       $("#klein").append(button26);
       $("#gross").append(button16);
       $("#gross").append(button20);
-      //$("#reset").append(button21);
       $("#treset").append(button21);
   
       webiopi().refreshGPIO(true);
+      
+      // Initial state update for flap buttons on page load
+      // This will ensure they are disabled if automation is not "Off" on initial load
+      webiopi().callMacro("getAutomationActive", [], function(response) {
+          currentAutomationMode = response; // Set the initial mode tracking
+          if (response === "Off") {
+              toggleManualFlapButtons(true);
+              document.getElementById("activeStatusOff").checked = true; // Ensure radio button reflects initial state
+          } else if (response === "On") {
+              toggleManualFlapButtons(false);
+              document.getElementById("activeStatusOn").checked = true;
+          } else if (response === "Batch") {
+              toggleManualFlapButtons(false);
+              document.getElementById("activeStatusBatch").checked = true;
+          }
+      });
     });
   
     var cellsInRow = 10;
-  
   
     function drawTable() {
       var div1 = document.getElementById('div1');
@@ -205,8 +244,7 @@
     window.onload=drawTable; 
   </script>
   <style type="text/css">
-    
-
+    /* Your existing CSS */
     #gpio21.LOW {
         background-color: black 
     }
@@ -274,6 +312,11 @@
       border-color: blue;
       flood-color: aquamarine;
 
+    }
+    /* Add this style to visually grey out disabled buttons more clearly */
+    button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
     table{
        border-collapse: collapse;

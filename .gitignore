@@ -1,0 +1,11 @@
+# Ignore VSCode settings
+.vscode/
+# Ignore all .log files
+*.log
+
+# Ignore a specific directory
+/build/
+/macros/__pycache__/*
+
+# Do not ignore this particular file, even if its folder is ignored
+!important.txt
