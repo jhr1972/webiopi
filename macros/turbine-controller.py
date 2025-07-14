@@ -47,27 +47,7 @@ MIN_BATCH_WAIT_DURATION_SECONDS = 6 * 3600
 l_result = []
 
 # SDM Modbus Register Definitions (as in your original code)
-regs = [
-   ( 'P1'     ,0x0c, '%6.2f',2 ), # Active Power ("Wirkleistung") Phase 1 [W]
-   ( 'P2'     ,0x000e, '%6.2f',2 ), # Active Power ("Wirkleistung") Phase 2 [W]
-   ( 'P3'     ,0x0010, '%6.2f',2 ), #  Active Power ("Wirkleistung") Phase 3 [W]
-   ( 'Ca'     ,0x64, '%6.2f',2 ), # Current Phase A[A]
-   ( 'Cb'     ,0x65, '%6.2f',2 ), # Current Phase B[A]
-   ( 'Cc'     ,0x66, '%6.2f',2 ), # Current Phase C[A]
-   ( 'Pa_active',0x67, '%6.3f',3 ), # Active Power ("Wirkleistung") Phase A [W]
-   ( 'Pb_active',0x68, '%6.3f',3 ), # Active Power ("Wirkleistung") Phase B [W]
-   ( 'Pc_active',0x69, '%6.3f',3 ), # Active Power ("Wirkleistung") Phase C [W]
-   ( 'P_active' ,0x6A, '%6.3f',0 ), # Active Power ("Wirkleistung") Total [W]
-   ( 'Freq'   ,0x77, '%6.2f',2 )  # Line Frequency [Hz]         
-]
 
-double_regs = [
-        # Symbol    Reg#  Format
-         ( 'Pa_compl'     , 0x164, '%6.2f',2 ), # Active Power with complement
-         ( 'Pb_compl'     ,0x166, '%6.1f',1 ), # Active Power with complement
-         ( 'Pc_compl'     ,0x168, '%6.1f',1 ), # Active Power with complement
-         ( 'P_compl'     ,0x16A, '%6.1f',1 ) # Active Total Power with complement
-]
 
 # Logger setup (as in your original code)
 logger = logging.getLogger(__name__)

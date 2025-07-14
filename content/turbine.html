@@ -38,8 +38,7 @@
     function updateValues() {
       var l_neuerSollwert = document.getElementById('neuerSollwert').value;
       var l_neuesZeitfenster = document.getElementById("neuesZeitfenster").value
-      var soll = [l_neuerSuerwert,l_neuesZeitfenster]
-      webiopi().callMacro("setValues",soll);
+      webiopi().callMacro("setValues", [l_neuerSollwert, l_neuesZeitfenster]);
     }
 
     // Function to enable/disable specific manual flap buttons
@@ -436,7 +435,7 @@
       <tr> <td>Aktuelles Zeitfenster:</td><td> <input id="aktuellesZeitfenster"  class="aktuellerWert"/> <br/></td><td id="countdown">...</td></tr>
       <tr> <td>Neuer Sollwert:    </td><td  colspan = "2"><input id="neuerSollwert"  class="greyedOutOff"/> <br></td></tr>
       <tr> <td>Neues Zeitfenster: </td><td  colspan = "2"><input id="neuesZeitfenster"  class="greyedOutOff"/> <br/></td></tr>
-      <tr><td colspan = "3" align="center"><input type="button" id="updateValues" value="Update" class="updateValues" onclick="updateValues(this)" /></td></tr>
+      <tr><td colspan = "3" align="center"><input type="button" id="updateValues" value="Update" class="updateValues" onclick="updateValues()" /></td></tr>
     </table>
   </div>
   <div style="float: left">
