@@ -8,7 +8,7 @@ import struct
 import logging
 import pymodbus.client.serial
 import sdm_modbus
-import threading
+import threading 
 
 from pysnmp.hlapi import *
 from flask import Flask 
@@ -39,15 +39,16 @@ batch_operation_start_time = None
 batch_next_state_change_time = None 
 
 # Batch configuration parameters (ADJUST THESE VALUES FOR YOUR PLANT)
-WATER_LEVEL_HIGH_THRESHOLD = 70.0 
-WATER_LEVEL_LOW_THRESHOLD = 25.0  
+WATER_LEVEL_HIGH_THRESHOLD = 41.0 
+WATER_LEVEL_LOW_THRESHOLD = 35.0  
 MAX_BATCH_RUN_DURATION_SECONDS = 4 * 3600 
 MIN_BATCH_WAIT_DURATION_SECONDS = 6 * 3600 
 
 l_result = []
 
-# SDM Modbus Register Definitions (as in your original code)
-
+# --- NEW: Global variables for reset logic ---
+RESET_GPIO = 21 # GPIO pin for the reset button
+turbine_reset_in_progress = False # Flag to prevent multiple resets simultaneously
 
 # Logger setup (as in your original code)
 logger = logging.getLogger(__name__)
@@ -124,6 +125,34 @@ def control_flaps(action):
         
         impulsstart = 0 # Reset impulse timer
 
+# --- NEW: Turbine Reset Function ---
+def _perform_reset_pulse():
+    """Internal function to perform the actual GPIO pulse. Runs in a separate thread."""
+    global turbine_reset_in_progress
+    logger.info(f"Initiating turbine reset pulse (GPIO {RESET_GPIO} HIGH for 1s).")
+    GPIO.output(RESET_GPIO, GPIO.HIGH)
+    time.sleep(1) # This sleep happens in the separate thread, not blocking main loop
+    GPIO.output(RESET_GPIO, GPIO.LOW)
+    logger.info(f"Turbine reset pulse complete (GPIO {RESET_GPIO} LOW).")
+    turbine_reset_in_progress = False # Reset flag after operation is done
+
+def reset_turbine():
+    """
+    Triggers a non-blocking reset pulse for the turbine.
+    Uses a separate thread to avoid blocking the main WebIOPi loop.
+    """
+    global turbine_reset_in_progress
+    if not turbine_reset_in_progress:
+        logger.warning("Turbine Alarm detected! Attempting automatic reset sequence.")
+        turbine_reset_in_progress = True
+        # Start the reset operation in a new daemon thread
+        reset_thread = threading.Thread(target=_perform_reset_pulse)
+        reset_thread.daemon = True # Allows the main program to exit even if this thread is running
+        reset_thread.start()
+    else:
+        logger.debug("Turbine reset already in progress or recently completed. Skipping additional reset call.")
+
+
 # --- Main WebIOPi Loop ---
 def loop():
     global l_result, automationActive, batch_state, batch_operation_start_time, batch_next_state_change_time
@@ -165,6 +194,9 @@ def loop():
             break
         except Exception as e:
             logger.error(f"Error fetching SNMP OID {i}: {e}")
+            # Ensure l_result[17] is handled if SNMP fails completely
+            if i == 17:
+                l_result[17] = "0" # Default to no alarm if cannot read
             break 
 
     waterlevel.addLevel(level)
@@ -182,10 +214,32 @@ def loop():
         logger.debug(f"Automation mode: Batch. Current state: {batch_state}")
         try:
             current_water_level_val = float(level) 
-        except ValueError:
-            logger.error(f"Could not convert water level '{level}' to float. Using 0.0 for safety.")
+            # NEW: Get alarm status from l_result (corresponds to smtps[17] in UI)
+            current_alarm_status = int(l_result[17])
+        except (ValueError, IndexError) as e:
+            logger.error(f"Error getting water level or alarm status (l_result[17]): {e}. Using safe defaults.")
             current_water_level_val = 0.0
+            current_alarm_status = 0 # Assume no alarm if cannot read or index out of bounds
 
+        # --- NEW: Check for Alarm/Störung first ---
+        if current_alarm_status == 1: # Alarm detected (from smtps[17] / l_result[17])
+            logger.error("BATCH: Turbine ALARM/Störung detected! Initiating shutdown and reset sequence.")
+            control_flaps("close_full") # Shut down flaps
+            control_flaps("stop")       # Ensure motors are off
+            reset_turbine()             # Trigger the non-blocking reset pulse
+
+            # Transition to WAITING state and set a cool-down period
+            batch_state = "WAITING"
+            batch_operation_start_time = None 
+            # Schedule next check after MIN_BATCH_WAIT_DURATION_SECONDS to allow reset and system to stabilize
+            batch_next_state_change_time = current_time + datetime.timedelta(seconds=MIN_BATCH_WAIT_DURATION_SECONDS)
+            logger.info(f"BATCH: Alarm detected. Transitioning to WAITING. Next state change scheduled for: {batch_next_state_change_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Important: Exit this loop iteration to prevent further batch logic from running
+            # until the next loop cycle, allowing the reset to take effect.
+            return 
+
+        # If no alarm, proceed with normal batch logic (WAITING/RUNNING)
         if batch_state == "WAITING":
             if (batch_next_state_change_time is None or current_time >= batch_next_state_change_time) \
                and current_water_level_val >= WATER_LEVEL_HIGH_THRESHOLD:
@@ -221,8 +275,6 @@ def loop():
                 logger.debug(f"BATCH: RUNNING. Water level: {current_water_level_val}. Time remaining: {remaining_run_time}")
 
     else: # automationActive == "Off"
-        # When automation is Off, the loop should do nothing to interfere with manual GPIO states.
-        # The control_flaps("stop") command is intentionally NOT called here.
         logger.debug("Automation mode: Off. Allowing manual GPIO control. No flap actions by script.")
     
     webiopi.sleep(0.5)
@@ -462,14 +514,14 @@ def setup():
     GPIO.setFunction(26, GPIO.OUT) 
     GPIO.setFunction(16, GPIO.OUT) 
     GPIO.setFunction(20, GPIO.OUT) 
-    GPIO.setFunction(21, GPIO.OUT) # Assuming this is also an output
+    GPIO.setFunction(RESET_GPIO, GPIO.OUT) # Ensure the reset GPIO is set as output
 
     # Initialize all GPIOs to LOW (off) at startup for safety
     GPIO.output(19, GPIO.LOW)
     GPIO.output(26, GPIO.LOW)
     GPIO.output(16, GPIO.LOW)
     GPIO.output(20, GPIO.LOW)
-    GPIO.output(21, GPIO.LOW) 
+    GPIO.output(RESET_GPIO, GPIO.LOW) # Initialize reset GPIO to LOW
 
     global last_automation_action_time
     last_automation_action_time = time.time() - aktuellesZeitfenster 
@@ -482,7 +534,7 @@ def destroy():
     GPIO.output(26, GPIO.LOW)
     GPIO.output(16, GPIO.LOW)
     GPIO.output(20, GPIO.LOW)
-    GPIO.output(21, GPIO.LOW) # Assuming this should also be off on destroy
+    GPIO.output(RESET_GPIO, GPIO.LOW) # Ensure reset GPIO is OFF on destroy
     GPIO.cleanup()
     logger.info("WebIOPi destroy complete. GPIOs cleaned up.")
 
