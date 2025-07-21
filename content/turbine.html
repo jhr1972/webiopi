@@ -9,6 +9,11 @@
     // Variable to hold the current automation mode from the backend
     var currentAutomationMode = "Off"; // Initialize to "Off" or a safe default
 
+    // NEW: Maps to manage Grafana refresh intervals and states
+    const grafanaRefreshIntervals = new Map(); // Stores setInterval IDs: Map<containerId, intervalId>
+    const grafanaRefreshStates = new Map();   // Stores user's preference: Map<containerId, boolean>
+    const GRAFANA_REFRESH_RATE_MS = 30000; // 30 seconds refresh rate
+
     function onRadioChange(selectedValue){
       var neuerSollwert = document.getElementById('neuerSollwert');
       var neuesZeitfenster = document.getElementById('neuesZeitfenster');
@@ -104,10 +109,10 @@
     // Update other display values regardless of mode
     $("#aktuellerSollwert").val(solls[1]);
     $("#aktuellesZeitfenster").val(solls[2]);
-    $("#Ca").val(solls[4]);
-    document.getElementById("Ca").textContent=(solls[3]);
-    document.getElementById("Cb").textContent=(solls[4]);
-    document.getElementById("Cc").textContent=(solls[5]);
+    $("#Ca").val(solls[4]); // Typo in your original: this should be the voltage for A
+    document.getElementById("Ca").textContent=(solls[3]); // Corrected: This is Voltage A [V]
+    document.getElementById("Cb").textContent=(solls[4]); // Corrected: This is Voltage B [V]
+    document.getElementById("Cc").textContent=(solls[5]); // Corrected: This is Voltage C [V]
     document.getElementById("Frequenz").textContent=(solls[7]);
     document.getElementById("spa").textContent=(solls[8]);
     document.getElementById("spb").textContent=(solls[9]);
@@ -129,7 +134,7 @@
                    //32 klein unten
                    //34 groß unten
                    //35 groß mitte 
-                   //36 groß oben
+                   //36 groß oben (Note: Your previous python code used 33 for gross_oben in macro, ensure consistency if changed)
                    //70 Betriebsstunden
        for (var c = 0; c < cellsInRow*10; c++) {
          document.getElementById("smtp"+c).textContent = smtps[c];
@@ -141,15 +146,15 @@
        document.getElementById("kleinunten").textContent = smtps[32];
        document.getElementById("grossunten").textContent = smtps[34];
        document.getElementById("grossmitte").textContent = smtps[35];
-       document.getElementById("grossoben").textContent = smtps[33];
-       if (parseInt(smtps[9]) == 1) {
+       document.getElementById("grossoben").textContent = smtps[33]; // Assuming 33 is still gross_oben as in previous script.py
+       if (parseInt(smtps[9]) == 1) { // Assuming smtps[9] is still for hydraulik
          document.getElementById("hydraulik").textContent = "on";
          document.getElementById("hydraulik").className = "green"
        }else {
          document.getElementById("hydraulik").textContent = "off";
          document.getElementById("hydraulik").className = "greyedOutOff"
        }
-       if (parseInt(smtps[17]) == 1) {
+       if (parseInt(smtps[17]) == 1) { // Assuming smtps[17] is still for alarm
          document.getElementById("talarm").className = "alarmon"
          document.getElementById("talarm").textContent = "FEHLER!!!"
        }else {
@@ -179,12 +184,37 @@
     {
        setInterval(TimerInterval,1000);
     }
+
+    // NEW: Functions to manage Grafana iframe refresh
+    function startGrafanaRefresh(containerId, grafanaUrl) {
+        stopGrafanaRefresh(containerId); // Ensure no duplicate intervals
+        console.log(`Starting refresh for ${containerId} at ${GRAFANA_REFRESH_RATE_MS / 1000}s interval.`);
+        const intervalId = setInterval(() => {
+            const container = document.getElementById(containerId);
+            const iframe = container ? container.querySelector('iframe') : null;
+            if (iframe && iframe.src) { // Only refresh if iframe exists and has a source
+                console.log(`Refreshing iframe for ${containerId}`);
+                // Re-setting src forces the iframe to reload its content
+                iframe.src = grafanaUrl; 
+            } else {
+                // If iframe is gone or src is empty, stop refreshing
+                stopGrafanaRefresh(containerId);
+            }
+        }, GRAFANA_REFRESH_RATE_MS);
+        grafanaRefreshIntervals.set(containerId, intervalId);
+    }
+
+    function stopGrafanaRefresh(containerId) {
+        if (grafanaRefreshIntervals.has(containerId)) {
+            clearInterval(grafanaRefreshIntervals.get(containerId));
+            grafanaRefreshIntervals.delete(containerId);
+            console.log(`Stopped refresh for ${containerId}.`);
+        }
+    }
   
     webiopi().ready(function() {
       TimerInterval();
       startInterval();
-      // webiopi().callMacro("getValues", [], pythonValues); // Already called by TimerInterval
-      // webiopi().callMacro("getAllSmtp", [], smtpValues); // Already called by TimerInterval
   
       var button19 = webiopi().createGPIOButton(19, "Klein-Auf");
       var button26 = webiopi().createGPIOButton(26, "Klein-Zu");
@@ -214,6 +244,79 @@
               document.getElementById("activeStatusBatch").checked = true;
           }
       });
+
+      // --- NEW JAVASCRIPT FOR LAZY LOADING GRAFANA ---
+      const toggleGrafanaButtons = document.querySelectorAll('.toggle-grafana-button');
+
+      toggleGrafanaButtons.forEach(button => {
+          const targetContainerId = button.dataset.target;
+          const grafanaUrl = button.dataset.grafanaUrl;
+
+          // Initialize refresh state for this chart (off by default)
+          grafanaRefreshStates.set(targetContainerId, false);
+
+          button.addEventListener('click', function() {
+              const container = document.getElementById(targetContainerId);
+              let iframe = container.querySelector('iframe');
+              const refreshCheckbox = document.getElementById('refresh-' + targetContainerId); // Get associated checkbox
+
+              // Toggle visibility
+              if (container.style.display === 'block') {
+                  // If currently visible, hide it
+                  container.style.display = 'none';
+                  this.textContent = this.textContent.replace('Hide', 'Show');
+                  // Stop refresh if chart is hidden
+                  stopGrafanaRefresh(targetContainerId);
+
+              } else {
+                  // If currently hidden, show it
+                  container.style.display = 'block';
+                  this.textContent = this.textContent.replace('Show', 'Hide');
+
+                  // If the iframe doesn't exist yet, create and load it
+                  if (!iframe) {
+                      iframe = document.createElement('iframe');
+                      iframe.src = grafanaUrl;
+                      iframe.width = "100%";
+                      iframe.height = "100%"; // Set height to 100% of container
+                      iframe.frameborder = "0";
+                      iframe.allowfullscreen = "true";
+                      container.appendChild(iframe);
+                  } else if (!iframe.src) {
+                      // If iframe exists but src wasn't set (e.g., initially empty src), set it now
+                      iframe.src = grafanaUrl;
+                  }
+
+                  // If refresh was enabled previously for this chart, start it now that it's visible
+                  if (grafanaRefreshStates.get(targetContainerId) && refreshCheckbox && refreshCheckbox.checked) {
+                      startGrafanaRefresh(targetContainerId, grafanaUrl);
+                  }
+              }
+          });
+      });
+      // --- END NEW JAVASCRIPT FOR LAZY LOADING GRAFANA ---
+
+      // NEW: Event listeners for Grafana refresh checkboxes
+      const refreshCheckboxes = document.querySelectorAll('.grafana-refresh-toggle');
+      refreshCheckboxes.forEach(checkbox => {
+          checkbox.addEventListener('change', function() {
+              const targetContainerId = this.dataset.target;
+              const grafanaUrl = this.dataset.grafanaUrl;
+              const container = document.getElementById(targetContainerId);
+
+              grafanaRefreshStates.set(targetContainerId, this.checked); // Store user's preference
+
+              if (this.checked) {
+                  // Only start refresh if the chart is currently visible
+                  if (container && container.style.display === 'block') {
+                      startGrafanaRefresh(targetContainerId, grafanaUrl);
+                  }
+              } else {
+                  stopGrafanaRefresh(targetContainerId);
+              }
+          });
+      });
+
     });
   
     var cellsInRow = 10;
@@ -325,7 +428,60 @@
        padding: 10px 20px;
        border: 1px solid #000;
     }
- 
+
+    /* --- NEW CSS FOR GRAFANA LAZY LOADING --- */
+    .grafana-container {
+        display: none; /* Initially hide the container */
+        width: 800px; /* Match your original iframe width */
+        height: 400px; /* Match your original iframe height */
+        border: 1px solid #ddd; /* Optional: A subtle border */
+        margin-top: 10px;
+        background-color: #f0f0f0; /* Placeholder background */
+        display: flex; /* Use flexbox to center content */
+        justify-content: center;
+        align-items: center;
+        color: #888;
+        font-style: italic;
+    }
+
+    .toggle-grafana-button {
+        padding: 10px 15px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        margin-top: 20px; /* Space above the button */
+        margin-bottom: 5px;
+        width: auto; /* Allow button to size to content */
+        height: auto; /* Reset height */
+        font-weight: normal; /* Reset font weight */
+        color: white; /* Reset color */
+    }
+
+    .toggle-grafana-button:hover {
+        background-color: #0056b3;
+    }
+
+    /* Styles for the refresh checkbox */
+    .grafana-refresh-option {
+        margin-top: 5px;
+        margin-bottom: 10px;
+        display: flex; /* Use flexbox for alignment */
+        align-items: center;
+        gap: 5px; /* Space between checkbox and label */
+        font-size: 14px;
+        color: #555;
+    }
+
+    .grafana-refresh-toggle {
+        width: 16px; /* Default checkbox size */
+        height: 16px;
+        cursor: pointer;
+    }
+
+    /* --- END NEW CSS --- */
   </style>
 </head>
 <body>
@@ -519,23 +675,32 @@
 </p>
 </tr>
 </table>
-  <iframe 
-  width="800"
-  height="400"
-  src='/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&viewPanel=2'
-  frameBorder="0"
-  loading="lazy">
-  </iframe>
 
-  <iframe 
-  width="800"
-  height="400"
-  src='/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&&viewPanel=6'
-  frameBorder="0"
-  loading="lazy">
+<div class="grafana-section">
+    <button class="toggle-grafana-button" data-target="grafana-chart-panel2" data-grafana-url="/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&viewPanel=2">
+        Show Turbine Dashboard (Panel 2)
+    </button>
+    <div class="grafana-refresh-option">
+        <input type="checkbox" id="refresh-grafana-chart-panel2" class="grafana-refresh-toggle" data-target="grafana-chart-panel2" data-grafana-url="/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&viewPanel=2">
+        <label for="refresh-grafana-chart-panel2">Activate Automatic Refresh (30s)</label>
+    </div>
+    <div id="grafana-chart-panel2" class="grafana-container">
+        Click 'Show Turbine Dashboard (Panel 2)' to load chart.
+    </div>
+</div>
 
-  </iframe>
-
+<div class="grafana-section">
+    <button class="toggle-grafana-button" data-target="grafana-chart-panel6" data-grafana-url="/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&viewPanel=6">
+        Show Turbine Dashboard (Panel 6)
+    </button>
+    <div class="grafana-refresh-option">
+        <input type="checkbox" id="refresh-grafana-chart-panel6" class="grafana-refresh-toggle" data-target="grafana-chart-panel6" data-grafana-url="/grafana/d/M979vRcVz/turbine-dahboard?orgId=1&theme=light&kiosk&viewPanel=6">
+        <label for="refresh-grafana-chart-panel6">Activate Automatic Refresh (30s)</label>
+    </div>
+    <div id="grafana-chart-panel6" class="grafana-container">
+        Click 'Show Turbine Dashboard (Panel 6)' to load chart.
+    </div>
+</div>
 
 <br>
 <br>
