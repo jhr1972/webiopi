@@ -29,7 +29,7 @@ impulsdauer = 3
 impulsstart = 0
 
 # Global variables for automation mode
-aktuellerSollwert = 40
+aktuellerSollwert = 43
 aktuellesZeitfenster = 1800
 automationActive = "Batch" # Changed to "Batch" as default based on your request
 
@@ -39,10 +39,10 @@ batch_operation_start_time = None
 batch_next_state_change_time = None
 
 # Batch configuration parameters (ADJUST THESE VALUES FOR YOUR PLANT)
-WATER_LEVEL_HIGH_THRESHOLD = 41.0
+WATER_LEVEL_HIGH_THRESHOLD = 44.0
 WATER_LEVEL_LOW_THRESHOLD = 35.0
 
-l_result = [] # Assuming you've already updated l_result population elsewhere in your actual code
+l_result = [] 
 
 # --- Global variables for flap control state management ---
 RESET_GPIO = 21 # GPIO pin for the reset button
@@ -210,6 +210,9 @@ def loop():
             elif i == 72:
                 level = l_result[i]
                 values["turbine_level"] = level
+            elif i == 74:
+              
+                values["turbine_arbeit"] = int(l_result[i]) +  322845
             elif i == 73:
                 power = l_result[i]
                 powerlevel.addLevel(int(power))
@@ -331,7 +334,7 @@ def read_sdm630 ( ):
         timeout=1,
         unit=1
     )
-    lst = ['l1_voltage','l2_voltage','l3_voltage','l1_power_active','l2_power_active','l3_power_active','total_power_active','import_energy_active','export_energy_reactive','frequency']
+    lst = ['l1_voltage','l2_voltage','l3_voltage','l1_power_active','l2_power_active','l3_power_active','total_power_active','import_energy_active','export_energy_active','frequency']
     global values
     try:
         for k, v in meter.read_all(sdm_modbus.registerType.INPUT).items():
