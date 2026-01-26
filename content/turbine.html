@@ -125,7 +125,10 @@
     document.getElementById("sdm530_l3_power_active").textContent=(solls[16]);
     document.getElementById("sdm530_total_power_active").textContent=(solls[17]);
     document.getElementById("sdm530_import_energy_active").textContent=(solls[18]);
-                   
+    if (solls.length > 20) {
+        document.getElementById("adl400_power").textContent = solls[19];
+        document.getElementById("adl400_energy").textContent = solls[20];
+    }                  
    }
 
    var smtpValues = function(macro, args, response) { 
@@ -633,41 +636,57 @@
   <div style="clear:both;" />
 <br>
 
-<table width=920  class="hiddenborder" >
-  <tr class="hiddenborder">
-  <td class="hiddenborder"><b>SDM530:</b></td>
-  </p> 
 
+
+<table width=920 class="hiddenborder">
+  <tr class="hiddenborder">
+    <td class="hiddenborder"><b>House Load (SDM530):</b></td>
+    <td class="hiddenborder"><b>PV Generation (ADL400):</b></td>
   </tr>
 </table>
 
-<div style="float: left">
+<div style="float: left; margin-right: 20px;">
   <table>
     <tr>
-      <td>L1 Power active [W]</td>
-      <td id=sdm530_l1_power_active></td>
+      <td>L1 Power [W]</td>
+      <td id="sdm530_l1_power_active"></td>
     </tr>
     <tr>
-      <td>L2 Power active [W]</td>
-      <td id=sdm530_l2_power_active></td>
+      <td>L2 Power [W]</td>
+      <td id="sdm530_l2_power_active"></td>
     </tr>
     <tr>
-      <td>L3 Power active [W]</td>
-      <td id=sdm530_l3_power_active></td>
+      <td>L3 Power [W]</td>
+      <td id="sdm530_l3_power_active"></td>
     </tr>
     <tr>
-      <td>Total Power active [W]</td>
-      <td id=sdm530_total_power_active></td>
+      <td>Total Power [W]</td>
+      <td id="sdm530_total_power_active"></td>
     </tr>
     <tr>
       <td>Energy Total [kWh]</td>
-      <td id=sdm530_import_energy_active></td>
+      <td id="sdm530_import_energy_active"></td>
     </tr>
-    
+  </table>
+</div>
+
+<div style="float: left">
+  <table>
+
+    <tr>
+      <td>Current Power [W]</td>
+      <td id="adl400_power">0.0</td>
+    </tr>
+    <tr>
+      <td>Total Energy [kWh]</td>
+      <td id="adl400_energy">0.0</td>
+    </tr>
   </table>
 </div> 
-<div style="clear:both;" />
+
+<div style="clear:both;"></div>
 <br>
+
 
 <table width=790  class="hiddenborder" >
 <tr class="hiddenborder">

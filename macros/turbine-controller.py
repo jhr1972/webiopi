@@ -29,7 +29,7 @@ impulsdauer = 3
 impulsstart = 0
 
 # Global variables for automation mode
-aktuellerSollwert = 43
+aktuellerSollwert = 31
 aktuellesZeitfenster = 1800
 automationActive = "Batch" # Changed to "Batch" as default based on your request
 
@@ -39,8 +39,8 @@ batch_operation_start_time = None
 batch_next_state_change_time = None
 
 # Batch configuration parameters (ADJUST THESE VALUES FOR YOUR PLANT)
-WATER_LEVEL_HIGH_THRESHOLD = 44.0
-WATER_LEVEL_LOW_THRESHOLD = 35.0
+WATER_LEVEL_HIGH_THRESHOLD = 32.0
+WATER_LEVEL_LOW_THRESHOLD = 20.0
 
 l_result = [] 
 
@@ -77,7 +77,6 @@ logger.addHandler(fh)
 # Assuming Level class is correctly imported from Basics
 waterlevel = Level(300,"level",logger)
 powerlevel = Level(100,"power",logger)
-
 
 # --- Helper Function for Flap Control ---
 def control_flaps(action):
@@ -229,6 +228,7 @@ def loop():
 
 
     waterlevel.addLevel(level)
+    read_adl400()
     read_sdm530()
     read_sdm630()
 
@@ -324,6 +324,46 @@ def loop():
 
     webiopi.sleep(0.5)
 
+def read_adl400():
+    meter = sdm_modbus.SDM630(
+        device='/dev/ttyUSB1', 
+        stopbits=1,
+        parity='N',
+        baud=9600,
+        timeout=1,
+        unit=13
+    )
+    
+    global values
+    try:
+        # Read Total Active Power (0x016A)
+      
+        power_res = meter.client.read_input_registers(0x006A, 1, unit=13)
+        
+        if not power_res.isError():
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                power_res.registers, 
+                byteorder=Endian.BIG, 
+                wordorder=Endian.BIG
+            )
+            # Total active power at 0x006A is a 16-bit signed integer
+            # Reference your manual for the multiplier (e.g., 0.1 or 0.01)
+            values['adl400_power_active'] = decoder.decode_16bit_int() * 0.1
+
+ ##       
+        energy_res = meter.client.read_input_registers(0x0000, 2, unit=13)
+        if not energy_res.isError():
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                energy_res.registers, 
+                byteorder=Endian.BIG, 
+                wordorder=Endian.BIG
+            )
+            # ADL400 returns 0.01kWh resolution
+            values['adl400_energy_active'] = decoder.decode_32bit_int() * 0.01
+        
+        logger.debug(f"ADL400: Power {values.get('adl400_power_active')}W, Energy {values.get('adl400_energy_active')}kWh")   
+    except Exception as e:
+        logger.error(f"ADL400 Scraper Error: {e}")
 
 def read_sdm630 ( ):
     meter = sdm_modbus.SDM630(
@@ -513,7 +553,7 @@ def getValues():
 
     # Make sure your Python macro returns the automationActive status as the first element
     # This is critical for the JavaScript logic.
-    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%s;%s;%d;%d;%d;%d;%.2f" % (
+    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%s;%s;%d;%d;%d;%d;%.2f;%d;%d" % (
         automationActive, # This must be the first element
         aktuellerSollwert,
         aktuellesZeitfenster,
@@ -532,7 +572,10 @@ def getValues():
         values.get('sdm530_l2_power_active', 0),
         values.get('sdm530_l3_power_active', 0),
         values.get('sdm530_total_power_active', 0),
-        values.get('sdm530_import_energy_active', 0.0)
+        values.get('sdm530_import_energy_active', 0.0),
+        values.get('adl400_power_active', 0.0),
+        values.get('adl400_energy_active', 0.0)
+
     )
 
 @webiopi.macro
