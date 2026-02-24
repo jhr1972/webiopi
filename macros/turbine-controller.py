@@ -325,6 +325,10 @@ def loop():
     webiopi.sleep(0.5)
 
 def read_adl400():
+    """
+    Scrapes the ADL400 Smart Meter using 32-bit registers.
+    Addresses: 0x016A (Power) and 0x0000 (Energy).
+    """
     meter = sdm_modbus.SDM630(
         device='/dev/ttyUSB1', 
         stopbits=1,
@@ -336,30 +340,30 @@ def read_adl400():
     
     global values
     try:
-        # Read Total Active Power (0x016A)
-      
-        power_res = meter.client.read_input_registers(0x006A, 1, unit=13)
-        
+        # 1. Read Total Active Power (32-bit / 2 Registers)
+        # Address 0x016A = 362 Decimal
+        power_res = meter.client.read_input_registers(0x016A, 2, unit=13)
         if not power_res.isError():
             decoder = BinaryPayloadDecoder.fromRegisters(
                 power_res.registers, 
                 byteorder=Endian.BIG, 
-                wordorder=Endian.BIG
+                wordorder=Endian.BIG    
             )
-            # Total active power at 0x006A is a 16-bit signed integer
-            # Reference your manual for the multiplier (e.g., 0.1 or 0.01)
-            values['adl400_power_active'] = decoder.decode_16bit_int() * 0.1
-
- ##       
+            # ADL400 32-bit power resolution is 0.1W (0.0001 kW)
+            # decode_32bit_int() handles the 'Complement form' for signed power
+            values['adl400_power_active'] = decoder.decode_32bit_int() * 0.1
+        
+        # 2. Read Total Active Energy (32-bit / 2 Registers)
+        # Address 0x0000 = 0 Decimal
         energy_res = meter.client.read_input_registers(0x0000, 2, unit=13)
         if not energy_res.isError():
             decoder = BinaryPayloadDecoder.fromRegisters(
                 energy_res.registers, 
-                byteorder=Endian.BIG, 
-                wordorder=Endian.BIG
+                byteorder=Endian.BIG
+                #wordorder=Endian.BIG
             )
-            # ADL400 returns 0.01kWh resolution
-            values['adl400_energy_active'] = decoder.decode_32bit_int() * 0.01
+            # ADL400 32-bit energy resolution is 0.01 kWh
+            values['adl400_energy_active'] = decoder.decode_32bit_int() * 0.001
         
         logger.debug(f"ADL400: Power {values.get('adl400_power_active')}W, Energy {values.get('adl400_energy_active')}kWh")   
     except Exception as e:
