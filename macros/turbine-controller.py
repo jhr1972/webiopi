@@ -329,41 +329,47 @@ def read_adl400():
     Scrapes the ADL400 Smart Meter using 32-bit registers.
     Addresses: 0x016A (Power) and 0x0000 (Energy).
     """
-    meter = sdm_modbus.SDM630(
-        device='/dev/ttyUSB1', 
+    meter400 = sdm_modbus.SDM630(
+        device='/dev/ttyUSB0', 
         stopbits=1,
         parity='N',
         baud=9600,
-        timeout=1,
-        unit=13
+        timeout=1
     )
     
     global values
     try:
         # 1. Read Total Active Power (32-bit / 2 Registers)
         # Address 0x016A = 362 Decimal
-        power_res = meter.client.read_input_registers(0x016A, 2, unit=13)
+        #x0156: 15447.2978515625   
+        #x0158: 22045.603515625W
+        #x0160: 1316.4449462890625W
+
+        power_res = meter400.client.read_holding_registers(0x016A, 2, slave=13)
+        #logger.debug(f"ADL400 Raw Power Registers: {power_res.registers}")
         if not power_res.isError():
             decoder = BinaryPayloadDecoder.fromRegisters(
                 power_res.registers, 
                 byteorder=Endian.BIG, 
-                wordorder=Endian.BIG    
+                wordorder=Endian.BIG 
             )
             # ADL400 32-bit power resolution is 0.1W (0.0001 kW)
             # decode_32bit_int() handles the 'Complement form' for signed power
-            values['adl400_power_active'] = decoder.decode_32bit_int() * 0.1
+            values['adl400_power_active'] = decoder.decode_32bit_uint() * 10
         
         # 2. Read Total Active Energy (32-bit / 2 Registers)
         # Address 0x0000 = 0 Decimal
-        energy_res = meter.client.read_input_registers(0x0000, 2, unit=13)
+        energy_res = meter400.client.read_holding_registers(0x0000, 2, slave=13)
+        #logger.debug(f"ADL400 Raw Energy Registers: {energy_res.registers}")
+
         if not energy_res.isError():
             decoder = BinaryPayloadDecoder.fromRegisters(
                 energy_res.registers, 
-                byteorder=Endian.BIG
-                #wordorder=Endian.BIG
+                byteorder=Endian.BIG,
+                wordorder=Endian.BIG
             )
             # ADL400 32-bit energy resolution is 0.01 kWh
-            values['adl400_energy_active'] = decoder.decode_32bit_int() * 0.001
+            values['adl400_energy_active'] = decoder.decode_32bit_int() #* 0.0001
         
         logger.debug(f"ADL400: Power {values.get('adl400_power_active')}W, Energy {values.get('adl400_energy_active')}kWh")   
     except Exception as e:
@@ -557,7 +563,7 @@ def getValues():
 
     # Make sure your Python macro returns the automationActive status as the first element
     # This is critical for the JavaScript logic.
-    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%s;%s;%d;%d;%d;%d;%.2f;%d;%d" % (
+    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%s;%s;%d;%d;%d;%d;%.2f;%.2f;%.2f" % (
         automationActive, # This must be the first element
         aktuellerSollwert,
         aktuellesZeitfenster,
