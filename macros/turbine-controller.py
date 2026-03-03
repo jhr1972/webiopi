@@ -41,6 +41,11 @@ batch_next_state_change_time = None
 # Batch configuration parameters (ADJUST THESE VALUES FOR YOUR PLANT)
 WATER_LEVEL_HIGH_THRESHOLD = 32.0
 WATER_LEVEL_LOW_THRESHOLD = 20.0
+# --- Daily Energy Tracking ---
+MIDNIGHT_VAL_FILE = "/home/pi/webiopi/adl400_midnight_energy.txt"
+energy_at_midnight = 0.0
+arbeit_at_midnight = 0.0
+last_reset_day = None
 
 l_result = [] 
 
@@ -324,11 +329,51 @@ def loop():
 
     webiopi.sleep(0.5)
 
+
+def update_daily_references():
+    global daily_refs, values
+    
+    now = datetime.datetime.now()
+    current_day = now.strftime("%Y-%m-%d")
+
+    # 1. First run after script start: Load from file
+    if daily_refs['last_reset_day'] is None:
+        try:
+            with open(REF_FILE, "r") as f:
+                line = f.read().strip()
+                if line:
+                    parts = line.split(",")
+                    # Format: Date, ADL, SDM530, SDM630, Arbeit
+                    daily_refs['last_reset_day'] = parts[0]
+                    daily_refs['adl400_energy'] = float(parts[1])
+                    daily_refs['sdm530_energy'] = float(parts[2])
+                    daily_refs['sdm630_energy'] = float(parts[3])
+                    daily_refs['turbine_arbeit'] = float(parts[4])
+        except Exception as e:
+            logger.warning(f"No reference file found, initializing with current values: {e}")
+            daily_refs['last_reset_day'] = current_day # Force initialization below
+
+    # 2. Midnight Transition: Update the file
+    if daily_refs['last_reset_day'] != current_day:
+        logger.info(f"Midnight detected! Updating daily references for {current_day}")
+        daily_refs['last_reset_day'] = current_day
+        daily_refs['adl400_energy'] = float(values.get('adl400_energy_active', 0))
+        daily_refs['sdm530_energy'] = float(values.get('sdm530_import_energy_active', 0))
+        daily_refs['sdm630_energy'] = float(values.get('sdm630_import_energy_active', 0))
+        daily_refs['turbine_arbeit'] = float(values.get('turbine_arbeit', 0))
+
+        with open(REF_FILE, "w") as f:
+            f.write(f"{current_day},{daily_refs['adl400_energy']},{daily_refs['sdm530_energy']},{daily_refs['sdm630_energy']},{daily_refs['turbine_arbeit']}")
+
+    # 3. Calculate "Today" values
+    values['adl400_energy_today'] = float(values.get('adl400_energy_active', 0)) - daily_refs['adl400_energy']
+    values['sdm530_energy_today'] = float(values.get('sdm530_import_energy_active', 0)) - daily_refs['sdm530_energy']
+    values['sdm630_energy_today'] = float(values.get('sdm630_import_energy_active', 0)) - daily_refs['sdm630_energy']
+    values['turbine_arbeit_today'] = float(values.get('turbine_arbeit', 0)) - daily_refs['turbine_arbeit']
+
 def read_adl400():
-    """
-    Scrapes the ADL400 Smart Meter using 32-bit registers.
-    Addresses: 0x016A (Power) and 0x0000 (Energy).
-    """
+    global values, energy_at_midnight, last_reset_day
+    
     meter400 = sdm_modbus.SDM630(
         device='/dev/ttyUSB0', 
         stopbits=1,
@@ -337,41 +382,72 @@ def read_adl400():
         timeout=1
     )
     
-    global values
     try:
-        # 1. Read Total Active Power (32-bit / 2 Registers)
-        # Address 0x016A = 362 Decimal
-        #x0156: 15447.2978515625   
-        #x0158: 22045.603515625W
-        #x0160: 1316.4449462890625W
-
+        # 1. Read Total Active Power (0x016A)
         power_res = meter400.client.read_holding_registers(0x016A, 2, slave=13)
-        #logger.debug(f"ADL400 Raw Power Registers: {power_res.registers}")
         if not power_res.isError():
             decoder = BinaryPayloadDecoder.fromRegisters(
                 power_res.registers, 
                 byteorder=Endian.BIG, 
                 wordorder=Endian.BIG 
             )
-            # ADL400 32-bit power resolution is 0.1W (0.0001 kW)
-            # decode_32bit_int() handles the 'Complement form' for signed power
-            values['adl400_power_active'] = decoder.decode_32bit_uint() * 10
+            # Using your confirmed multiplier for Watts
+            # Berechne den vorläufigen Wert
+            raw_power = decoder.decode_32bit_uint() * 10
+            
+            # Sanity Check: Wenn der Wert > 20.000 (20kW), setze ihn auf 0
+            if raw_power > 20000:
+                logger.warning(f"ADL400: Ungültiger Power-Wert erkannt ({raw_power}W). Setze auf 0.")
+                values['adl400_power_active'] = 0
+            else:
+                values['adl400_power_active'] = raw_power
         
-        # 2. Read Total Active Energy (32-bit / 2 Registers)
-        # Address 0x0000 = 0 Decimal
+        # 2. Read Total Active Energy (0x0000)
         energy_res = meter400.client.read_holding_registers(0x0000, 2, slave=13)
-        #logger.debug(f"ADL400 Raw Energy Registers: {energy_res.registers}")
-
         if not energy_res.isError():
             decoder = BinaryPayloadDecoder.fromRegisters(
                 energy_res.registers, 
                 byteorder=Endian.BIG,
                 wordorder=Endian.BIG
             )
-            # ADL400 32-bit energy resolution is 0.01 kWh
-            values['adl400_energy_active'] = decoder.decode_32bit_int() #* 0.0001
-        
-        logger.debug(f"ADL400: Power {values.get('adl400_power_active')}W, Energy {values.get('adl400_energy_active')}kWh")   
+            total_energy = decoder.decode_32bit_int() * 0.1 # Adjust scaling if needed
+            values['adl400_energy_active'] = total_energy
+
+            # --- DAILY ENERGY LOGIC ---
+            now = datetime.datetime.now()
+            current_day = now.strftime("%Y-%m-%d")
+
+            # 1. INITIALIZATION: Only run this if we don't know the last_reset_day yet
+            if last_reset_day is None:
+                try:
+                    with open(MIDNIGHT_VAL_FILE, "r") as f:
+                        lines = f.readlines()
+                        if lines:
+                            last_line = lines[-1].strip()
+                            if "," in last_line:
+                                f_day, f_val = last_line.split(",")
+                                last_reset_day = f_day
+                                energy_at_midnight = float(f_val)
+                                logger.info(f"System Restart: Loaded existing midnight reference for {f_day}")
+                except Exception as e:
+                    logger.warning(f"No valid history found, creating first entry: {e}")
+
+            # 2. THE TRANSITION: Only write a NEW line if the day has actually changed
+            # AND we have a valid total_energy reading
+            if last_reset_day != current_day:
+                logger.info(f"Day Change Detected! Resetting daily counter from {last_reset_day} to {current_day}")
+                
+                energy_at_midnight = total_energy
+                last_reset_day = current_day
+                
+                # Append the new day's starting value
+                with open(MIDNIGHT_VAL_FILE, "a") as f:
+                    f.write(f"\n{last_reset_day},{energy_at_midnight}")
+
+            # 3. CALCULATION
+            values['adl400_energy_today'] = total_energy - energy_at_midnight
+
+        logger.debug(f"ADL400: Power {values.get('adl400_power_active')}W, Total Energy {values.get('adl400_energy_active')}W, Today {values.get('adl400_energy_today'):.2f}kWh")   
     except Exception as e:
         logger.error(f"ADL400 Scraper Error: {e}")
 
@@ -563,7 +639,7 @@ def getValues():
 
     # Make sure your Python macro returns the automationActive status as the first element
     # This is critical for the JavaScript logic.
-    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%s;%s;%d;%d;%d;%d;%.2f;%.2f;%.2f" % (
+    return "%s;%d;%d;%.2f;%.2f;%.2f;%d;%.2f;%d;%d;%d;%d;%s;%s;%d;%d;%d;%d;%.2f;%d;%.1f" % (
         automationActive, # This must be the first element
         aktuellerSollwert,
         aktuellesZeitfenster,
